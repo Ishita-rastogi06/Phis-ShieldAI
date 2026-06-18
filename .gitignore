@@ -1,0 +1,81 @@
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.pyz
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# ========================
+# Environment & Secrets
+# ========================
+.env
+.env.local
+.env.*.local
+secrets.toml
+*.key
+
+# ========================
+# Large ML / Data files
+# ========================
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.model
+*.bin
+*.pt
+*.pth
+
+# Large datasets — commit only small sample files
+phishing_dataset.csv
+phishing_email_dataset.csv
+
+# ========================
+# Scan History & Logs
+# ========================
+scan_history.csv
+*.log
+
+# ========================
+# Streamlit
+# ========================
+.streamlit/secrets.toml
+
+# ========================
+# IDEs & Editors
+# ========================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+
+# ========================
+# OS files
+# ========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========================
+# Jupyter Notebooks
+# ========================
+.ipynb_checkpoints/
+*.ipynb
