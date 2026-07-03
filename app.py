@@ -43,6 +43,24 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide"
 )
+st.markdown("""
+<style>
+
+/* Sidebar radio options */
+section[data-testid="stSidebar"] label p{
+    font-size:22px !important;
+    font-weight:800;
+}
+
+/* Sidebar heading */
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3{
+    font-size:22px !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 st.title("🛡️ Phis-ShieldAI")
 
