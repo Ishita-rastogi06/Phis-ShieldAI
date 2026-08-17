@@ -26,8 +26,10 @@ dist/
 # Environment & Secrets
 # ========================
 .env
+.env.*
 .env.local
 .env.*.local
+!.env.example
 secrets.toml
 *.key
 
@@ -42,6 +44,8 @@ secrets.toml
 *.bin
 *.pt
 *.pth
+models/artifacts/*.joblib
+!models/artifacts/url_lexical_detector.joblib
 
 # Large datasets — commit only small sample files
 phishing_dataset.csv
@@ -57,6 +61,8 @@ scan_history.csv
 # Streamlit
 # ========================
 .streamlit/secrets.toml
+.streamlit-test-tmp*/
+.streamlit-ui-regression/
 
 # ========================
 # IDEs & Editors
@@ -79,3 +85,17 @@ desktop.ini
 # ========================
 .ipynb_checkpoints/
 *.ipynb
+
+# ========================
+# pytest / test caches
+# ========================
+.pytest_cache/
+pytest-cache-files-*/
+
+# ========================
+# tldextract offline cache
+# ========================
+# The .cache/ directory stores tldextract's Public Suffix List snapshot.
+# It is generated at runtime and must NOT be committed — it contains a
+# large binary file and is re-created automatically on first run.
+.cache/
