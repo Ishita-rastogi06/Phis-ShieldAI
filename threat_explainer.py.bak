@@ -103,18 +103,6 @@ def explain_threat(prediction, similarity, ssl_enabled, url, title):
     elif similarity > 60 and not trusted:
         reasons.append("Possible brand name similarity detected — could be spoofing.")
 
-    # Check for brand variations like paypal1, amaz0n, g00gle, paypa1, pay-pal
-    if not trusted:
-        brand_variation_patterns = [
-            r'paypal\d+', r'amaz0n', r'g00gle', r'paypa1', r'pay-pal',
-            r'micros0ft', r'app1e', r'netfl1x', r'faceb00k'
-        ]
-        for pattern in brand_variation_patterns:
-            matched = re.search(pattern, netloc)
-            if matched:
-                reasons.append(f"Suspicious brand variation token in domain ('{matched.group(0)}').")
-                break
-
     # --- SSL ---
     if not ssl_enabled and not trusted:
         reasons.append("Website does not use HTTPS (no SSL/TLS encryption).")
@@ -126,13 +114,13 @@ def explain_threat(prediction, similarity, ssl_enabled, url, title):
         high_risk_words = [
             "signin", "sign-in", "otp", "password", "credential",
             "suspended", "verify-account", "login-secure",
-            "banking-login", "secure-update", "verify", "verification",
+            "banking-login", "secure-update",
         ]
         # Medium-risk keywords — only flag if 2+ appear together
         medium_risk_words = [
-            "login", "secure", "account", "update", "bank",
+            "login", "verify", "secure", "account", "update", "bank",
             "confirm", "reset", "billing", "payment", "unlock",
-            "recover", "reactivate", "validate", "wallet", "support",
+            "recover", "reactivate", "validate", "wallet",
         ]
 
         high_found = [w for w in high_risk_words if _word_in_url(w, url_lower)]
@@ -140,15 +128,15 @@ def explain_threat(prediction, similarity, ssl_enabled, url, title):
 
         # Only report high-risk words individually
         if high_found:
-            reasons.append(f"URL contains high-risk security/verification keywords: {', '.join(sorted(set(high_found)))}.")
+            reasons.append(f"URL contains high-risk keywords: {', '.join(high_found)}.")
 
         # Only report medium-risk if 2 or more co-occur (single generic word is not enough)
         if len(medium_found) >= 2:
             reasons.append(
-                f"URL contains multiple suspicious keywords: {', '.join(sorted(set(medium_found)))}."
+                f"URL contains multiple suspicious keywords: {', '.join(medium_found)}."
             )
-        elif len(medium_found) == 1 and (prediction == 1 or similarity > 60):
-            # One medium keyword + ML flag / brand similarity together = worth reporting
+        elif len(medium_found) == 1 and prediction == 1:
+            # One medium keyword + ML flag together = worth reporting
             reasons.append(f"URL contains suspicious keyword: {medium_found[0]}.")
 
     # --- IP address used as host ---

@@ -1,120 +1,67 @@
-from rapidfuzz import fuzz
-from urllib.parse import urlparse
+"""Conservative brand-impersonation detection for registrable-domain evidence."""
+from __future__ import annotations
+
 import re
+from urllib.parse import urlparse
 
-brands = [
-    # Global tech / social
-    "amazon", "google", "microsoft", "apple", "facebook", "instagram",
-    "netflix", "youtube", "twitter", "linkedin", "whatsapp", "telegram",
-    "dropbox", "adobe", "salesforce", "zoom", "slack", "github",
-    # Finance / payments
-    "paypal", "stripe", "visa", "mastercard", "americanexpress",
-    "wellsfargo", "bankofamerica", "chase", "citibank", "hsbc",
-    "barclays", "halifax", "lloyds", "natwest", "santander",
-    # Indian brands
-    "paytm", "sbi", "hdfc", "icici", "axisbank", "kotak", "pnb",
-    "phonepe", "gpay", "mobikwik", "ola", "uber", "swiggy", "zomato",
-    "flipkart", "myntra", "meesho", "jiomart", "bigbasket", "blinkit",
-    "airtel", "jio", "vodafone", "bsnl", "irctc",
-    "incometax", "aadhaar", "epfo", "npci",
-    # Crypto / fintech
-    "coinbase", "binance", "kraken", "metamask", "wazirx", "coindcx",
-    # Retail / ecommerce
-    "walmart", "target", "ebay", "etsy", "shopify", "aliexpress",
-    # Telecoms / ISPs
-    "att", "verizon", "tmobile", "comcast", "spectrum",
-    # Gov / utilities  (removed ultra-short ones like "gov","irs","upi","nhs","hmrc"
-    #                    that cause false matches on unrelated short domains)
-    "medicare", "socialsecurity",
-]
+from rapidfuzz import fuzz
+from security.tldextract_config import offline_extractor
 
-# Brands that are short (≤4 chars) need exact match in domain, not fuzzy
-SHORT_BRANDS = {b for b in brands if len(b) <= 4}
-
-# Authoritative domains — if the URL belongs to one of these, no impersonation possible
-AUTHORITATIVE_DOMAINS = {
-    "google.com", "gmail.com", "youtube.com",
-    "microsoft.com", "outlook.com", "live.com", "office.com",
-    "apple.com", "icloud.com",
-    "amazon.com", "amazon.in", "amazonaws.com",
-    "facebook.com", "instagram.com", "meta.com",
-    "twitter.com", "x.com",
-    "linkedin.com", "netflix.com", "github.com",
-    "paypal.com", "stripe.com", "zoom.us", "slack.com",
-    "adobe.com", "salesforce.com", "shopify.com",
-    "flipkart.com", "paytm.com", "phonepe.com",
-    "sbi.co.in", "onlinesbi.sbi", "hdfcbank.com",
-    "icicibank.com", "axisbank.com", "kotak.com",
-    "irctc.co.in", "incometax.gov.in", "uidai.gov.in",
-    "npci.org.in",
-    # Additional well-known legitimate domains
-    "wikipedia.org", "stackoverflow.com", "stackexchange.com",
-    "reddit.com", "bbc.com", "bbc.co.uk", "reuters.com",
-    "nytimes.com", "cnn.com", "medium.com",
-    "cloudflare.com", "akamai.com",
-    "npmjs.com", "pypi.org", "docker.com",
-    "ebay.com", "walmart.com",
+_EXTRACT = offline_extractor()
+BRAND_DOMAINS = {
+    "amazon": {"amazon.com", "amazon.in", "amazonaws.com"}, "google": {"google.com", "gmail.com"},
+    "microsoft": {"microsoft.com", "live.com", "office.com"}, "apple": {"apple.com", "icloud.com"},
+    "paypal": {"paypal.com"}, "netflix": {"netflix.com"}, "github": {"github.com"},
+    "facebook": {"facebook.com", "instagram.com", "meta.com"}, "stripe": {"stripe.com"},
+    "linkedin": {"linkedin.com"}, "sbi": {"sbi.co.in"}, "hdfc": {"hdfcbank.com"},
+    "wikipedia": {"wikipedia.org"},
 }
+AUTHORITATIVE_DOMAINS = {domain for domains in BRAND_DOMAINS.values() for domain in domains} | {
+    "stackoverflow.com", "stackexchange.com", "reddit.com", "bbc.com", "bbc.co.uk",
+    "reuters.com", "cloudflare.com", "pypi.org", "npmjs.com", "example.com",
+}
+GENERIC_TOKENS = {"login", "secure", "account", "verify", "update", "support", "mail", "cloud", "service", "official", "signin", "sign", "www", "auth", "portal", "online"}
+
+
+def _host(url: str) -> str:
+    return (urlparse(url if "://" in url else f"https://{url}").hostname or "").lower().strip(".")
+
+
+def _registrable_domain(host: str) -> str:
+    parts = _EXTRACT(host)
+    return ".".join(part for part in (parts.domain, parts.suffix) if part)
 
 
 def _is_authoritative(netloc: str) -> bool:
-    netloc = netloc.lower()
-    # Remove www. prefix properly (not lstrip which strips chars, not strings)
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    for auth in AUTHORITATIVE_DOMAINS:
-        if netloc == auth or netloc.endswith("." + auth):
-            return True
-    return False
+    host = _host(netloc)
+    domain = _registrable_domain(host)
+    return any(domain == known or domain.endswith("." + known) for known in AUTHORITATIVE_DOMAINS)
 
 
-def _extract_domain_tokens(url):
-    try:
-        parsed = urlparse(url if "://" in url else "https://" + url)
-        host = parsed.netloc.lower().replace("www.", "")
-        path = parsed.path.lower()
-        # Strip TLD for matching (e.g. "amazon" from "amazon.com")
-        host_no_tld = re.sub(r'\.[a-z]{2,}(\.[a-z]{2,})?$', '', host)
-        return host, host_no_tld, path
-    except Exception:
-        return url.lower(), url.lower(), ""
+def _tokens(host: str) -> set[str]:
+    return {token for token in re.split(r"[^a-z0-9]+", host) if token and token not in GENERIC_TOKENS}
 
 
-def detect_brand(url):
-    parsed = urlparse(url if "://" in url else "https://" + url)
-    netloc = parsed.netloc.lower().lstrip("www.")
-
-    # If URL belongs to the brand's own domain, return no impersonation
-    if _is_authoritative(netloc):
+def detect_brand(url: str) -> tuple[str, int]:
+    """Return a brand only with direct hostname evidence; never guess from generic fuzziness."""
+    host = _host(url)
+    domain = _registrable_domain(host)
+    if not host or _is_authoritative(host):
         return "Unknown", 0
-
-    host, host_no_tld, path = _extract_domain_tokens(url)
-    search_text = host + " " + host_no_tld
-
-    best_brand = "Unknown"
-    best_score = 0
-
-    for brand in brands:
-        if brand in SHORT_BRANDS:
-            # Short brands: only count exact token match in host_no_tld
-            # e.g. "sbi" must appear as a standalone part of the subdomain/domain
-            pattern = r'(?<![a-z0-9])' + re.escape(brand) + r'(?![a-z0-9])'
-            if re.search(pattern, host_no_tld):
-                score = 90
-            else:
-                continue  # skip fuzzy for short brands — too many false positives
-        else:
-            if brand in search_text:
-                score = 95
-            else:
-                score = fuzz.partial_ratio(brand, search_text)
-
-        if score > best_score:
-            best_score = score
-            best_brand = brand
-
-    # Raise minimum threshold to reduce false positives
-    if best_score < 70:
+    label = _EXTRACT(host).domain.lower()
+    meaningful = _tokens(host)
+    candidates: list[tuple[str, int]] = []
+    for brand, domains in BRAND_DOMAINS.items():
+        # Direct brand token on a non-authoritative registrable domain is strong evidence.
+        if brand in meaningful or brand in label:
+            candidates.append((brand, 95))
+            continue
+        # Typo evidence compares only the registrable label, never arbitrary URL text.
+        typo_scores = [fuzz.ratio(brand, token) for token in meaningful]
+        ratio = max(typo_scores, default=0)
+        if len(brand) >= 5 and ratio >= 82:
+            candidates.append((brand, int(ratio)))
+    if not candidates:
         return "Unknown", 0
-
-    return best_brand, best_score
+    brand, score = max(candidates, key=lambda item: item[1])
+    return brand, score

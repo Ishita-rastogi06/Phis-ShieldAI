@@ -1338,23 +1338,14 @@ URLs Found:
 
 elif analysis_mode == "URL Analysis":
 
-    url_input_val = st.text_input(
+    url = st.text_input(
         "Enter URL",
-        placeholder="https://amaz0n-login-security.xyz",
-        key="url_input"
+        placeholder="https://amaz0n-login-security.xyz"
     )
 
-    url_to_analyze = url_input_val.strip()
+    if st.button("Analyze URL"):
 
-    if "url_analysis_target" in st.session_state and st.session_state["url_analysis_target"] != url_to_analyze:
-        st.session_state.pop("url_analysis_result", None)
-        st.session_state.pop("url_analysis_target", None)
-
-    analyze_clicked = st.button("Analyze URL", key="btn_analyze_url")
-
-    if analyze_clicked:
-
-        if not url_to_analyze:
+        if not url.strip():
 
             st.warning(
                 "Please enter a URL."
@@ -1362,12 +1353,11 @@ elif analysis_mode == "URL Analysis":
 
             st.stop()
 
-        complete_url_result = run_complete_url_analysis(url_to_analyze)
+        complete_url_result = run_complete_url_analysis(url)
         st.session_state["url_analysis_result"] = complete_url_result
-        st.session_state["url_analysis_target"] = url_to_analyze
         st.session_state["last_scan_result"] = complete_url_result
 
-    if "url_analysis_result" in st.session_state and st.session_state.get("url_analysis_target") == url_to_analyze and url_to_analyze:
+    if "url_analysis_result" in st.session_state:
         render_url_evidence(st.session_state["url_analysis_result"], scan_type="URL")
         st.stop()
 

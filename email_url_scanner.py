@@ -1,10 +1,1 @@
-import re
-
-def extract_urls(email_text):
-
-    urls = re.findall(
-        r'https?://[^\s]+',
-        email_text
-    )
-
-    return urls
+from security.url_extraction import extract_urls

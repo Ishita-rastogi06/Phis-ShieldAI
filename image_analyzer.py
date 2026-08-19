@@ -1,5 +1,6 @@
 import easyocr
 import re
+from security.url_extraction import extract_urls
 
 reader = easyocr.Reader(['en'])
 
@@ -57,7 +58,7 @@ MEDIUM_RISK_WEIGHTS = {
 
 
 def _find_urls(text):
-    return re.findall(r'https?://\S+|www\.\S+', text, re.IGNORECASE)
+    return extract_urls(text)
 
 
 def analyze_screenshot(image_path):

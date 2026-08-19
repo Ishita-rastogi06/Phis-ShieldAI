@@ -7,13 +7,28 @@ free-tier quota during repeated scans or live demos.
 from __future__ import annotations
 
 import os
+import ssl
 import requests
+from requests.adapters import HTTPAdapter
 
 from intelligence.contracts import *
 from intelligence.diagnostics import log_provider_http, log_provider_result
 from intelligence.provider_cache import (
     cache_get, cache_set, is_rate_limited, record_rate_limit, record_success,
 )
+
+
+class _UrlscanSSLAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = ssl.create_default_context()
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
+
+
+def _get_session() -> requests.Session:
+    session = requests.Session()
+    session.mount("https://", _UrlscanSSLAdapter())
+    return session
 
 
 def lookup_url(url: str, timeout: float = 6.0) -> dict:
@@ -38,16 +53,29 @@ def lookup_url(url: str, timeout: float = 6.0) -> dict:
 
     # ── Live request ──────────────────────────────────────────────────────────
     try:
-        response = requests.get(
-            "https://urlscan.io/api/v1/search/",
-            params={"q": f'task.url.keyword:"{url}"', "size": 3},
-            headers={
-                "API-Key": key,
-                "Accept": "application/json",
-                "User-Agent": "PhishShieldAI/1.0",
-            },
-            timeout=timeout,
-        )
+        try:
+            response = requests.get(
+                "https://urlscan.io/api/v1/search/",
+                params={"q": f'task.url.keyword:"{url}"', "size": 3},
+                headers={
+                    "API-Key": key,
+                    "Accept": "application/json",
+                    "User-Agent": "PhishShieldAI/1.0",
+                },
+                timeout=timeout,
+            )
+        except requests.exceptions.SSLError:
+            session = _get_session()
+            response = session.get(
+                "https://urlscan.io/api/v1/search/",
+                params={"q": f'task.url.keyword:"{url}"', "size": 3},
+                headers={
+                    "API-Key": key,
+                    "Accept": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+                timeout=timeout,
+            )
         log_provider_http("urlscan", url, response.status_code)
 
         if response.status_code == 429:

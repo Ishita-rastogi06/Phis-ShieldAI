@@ -97,16 +97,8 @@ def lookup_url_virustotal(url: str, timeout: float = 6.0) -> dict:
             return outcome
 
         response.raise_for_status()
-        payload = response.json() if response.content else {}
-        data_obj = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(data_obj, dict) or "attributes" not in data_obj:
-            outcome = result("virustotal", NO_MATCH, reason="No existing VirusTotal URL report attributes")
-            cache_set("virustotal", url, outcome)
-            log_provider_result("virustotal", url, outcome)
-            return outcome
-
-        attrs = data_obj.get("attributes", {})
-        stats = attrs.get("last_analysis_stats", {}) if isinstance(attrs, dict) else {}
+        attrs = response.json()["data"]["attributes"]
+        stats = attrs.get("last_analysis_stats", {})
         malicious   = int(stats.get("malicious",   0))
         suspicious  = int(stats.get("suspicious",  0))
         evidence = {

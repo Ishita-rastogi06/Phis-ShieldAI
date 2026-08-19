@@ -58,10 +58,13 @@ def cache_clear(provider: str | None = None) -> None:
     """Clear the cache — optionally for one provider only (useful in tests)."""
     if provider is None:
         _cache.clear()
+        _backoff.clear()
     else:
         for key in list(_cache):
             if key[0] == provider:
                 del _cache[key]
+        if provider in _backoff:
+            del _backoff[provider]
 
 
 # ── Rate-limit backoff ────────────────────────────────────────────────────────

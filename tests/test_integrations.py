@@ -8,7 +8,13 @@ from security.url_security import UnsafeURLError, normalise_url
 from intelligence.contracts import result, AVAILABLE, NO_MATCH, NOT_CONFIGURED, RATE_LIMITED, TIMEOUT, UNAVAILABLE
 
 class ThreatIntelTests(unittest.TestCase):
-    def tearDown(self): clear_history()
+    def setUp(self):
+        from intelligence.provider_cache import cache_clear
+        cache_clear()
+    def tearDown(self):
+        clear_history()
+        from intelligence.provider_cache import cache_clear
+        cache_clear()
     def test_url_extraction_normalises_and_deduplicates(self):
         self.assertEqual(extract_urls("www.example.com/a https://example.com/a https://example.com/a"), ["https://www.example.com/a", "https://example.com/a"])
     @patch("virustotal_scanner.requests.get")
@@ -17,6 +23,7 @@ class ThreatIntelTests(unittest.TestCase):
         from virustotal_scanner import lookup_url_virustotal
         get.return_value = Mock(status_code=200, json=lambda: {"data": {"attributes": {"last_analysis_stats": {"malicious": 4, "suspicious": 0}}}}); get.return_value.raise_for_status = Mock()
         self.assertTrue(lookup_url_virustotal("https://example.com")["strong"])
+        from intelligence.provider_cache import cache_clear; cache_clear()
         get.return_value.status_code = 404; self.assertEqual(lookup_url_virustotal("https://example.com")["status"], "NO_MATCH")
     @patch("intelligence.urlhaus.requests.post")
     @patch("intelligence.urlhaus.os.getenv", return_value="key")
@@ -34,6 +41,7 @@ class ThreatIntelTests(unittest.TestCase):
         from intelligence.urlscan import lookup_url
         get.return_value = Mock(status_code=200, json=lambda: {"results": [{"_id": "x", "page": {}, "task": {}, "stats": {}}]}); get.return_value.raise_for_status = Mock()
         self.assertEqual(lookup_url("https://example.com")["status"], "AVAILABLE")
+        from intelligence.provider_cache import cache_clear; cache_clear()
         get.return_value.status_code = 429; self.assertEqual(lookup_url("https://example.com")["status"], "RATE_LIMITED")
     def test_verdict_policy(self):
         self.assertEqual(calculate_verdict(providers={"urlhaus": {"malicious": True, "strong": True}}, brand_similarity=0, trusted_domain=False, website={}, tls={}, whois=None, local_reasons=[])[0], "CONFIRMED_MALICIOUS")
@@ -173,6 +181,7 @@ class ThreatIntelTests(unittest.TestCase):
         from intelligence.urlscan import lookup_url
         get.return_value = Mock(status_code=200, json=lambda: {"results": []}); get.return_value.raise_for_status = Mock()
         self.assertEqual(lookup_url("https://example.com")["status"], NO_MATCH)
+        from intelligence.provider_cache import cache_clear; cache_clear()
         get.side_effect = __import__('requests').Timeout()
         self.assertEqual(lookup_url("https://example.com")["status"], TIMEOUT)
     @patch("intelligence.urlhaus.requests.post")
@@ -181,6 +190,7 @@ class ThreatIntelTests(unittest.TestCase):
         from intelligence.urlhaus import lookup_url
         post.return_value = Mock(status_code=200, json=lambda: {"query_status": "no_results"}); post.return_value.raise_for_status = Mock()
         self.assertEqual(lookup_url("https://bad.example")["status"], NO_MATCH)
+        from intelligence.provider_cache import cache_clear; cache_clear()
         post.return_value.status_code = 429
         self.assertEqual(lookup_url("https://bad.example")["status"], RATE_LIMITED)
     @patch("intelligence.openphish._feed", return_value=set())

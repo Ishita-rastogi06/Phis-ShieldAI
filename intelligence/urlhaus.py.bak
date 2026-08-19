@@ -47,9 +47,10 @@ def lookup_url(url: str, timeout: float = 6.0) -> dict:
 
     # ── Key check ─────────────────────────────────────────────────────────────
     key = os.getenv("URLHAUS_AUTH_KEY", "").strip()
-    req_headers = {"User-Agent": "PhishShieldAI/1.0"}
-    if key:
-        req_headers["Auth-Key"] = key
+    if not key:
+        outcome = result("urlhaus", NOT_CONFIGURED, reason="URLHAUS_AUTH_KEY is not configured")
+        log_provider_result("urlhaus", url, outcome)
+        return outcome
 
     # ── Live request ──────────────────────────────────────────────────────────
     try:
@@ -57,18 +58,15 @@ def lookup_url(url: str, timeout: float = 6.0) -> dict:
             response = requests.post(
                 API,
                 data={"url": url},
-                headers=req_headers,
+                headers={"Auth-Key": key, "User-Agent": "PhishShieldAI/1.0"},
                 timeout=timeout,
             )
         except requests.exceptions.SSLError:
             session = _get_session()
-            session_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            if key:
-                session_headers["Auth-Key"] = key
             response = session.post(
                 API,
                 data={"url": url},
-                headers=session_headers,
+                headers={"Auth-Key": key, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
                 timeout=timeout,
             )
         log_provider_http("urlhaus", url, response.status_code)

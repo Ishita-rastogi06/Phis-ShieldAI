@@ -39,12 +39,28 @@ _LOG = logging.getLogger("phishshield.expander")
 # ── Constants ─────────────────────────────────────────────────────────────────
 MAX_HOPS            = 5       # maximum redirect hops before giving up
 HOP_TIMEOUT_S       = 5.0     # per-hop connection + read timeout
-GENERIC_DETECT_HOPS = 1       # hops to probe non-listed URLs for redirects
+GENERIC_DETECT_HOPS = 3       # hops to probe non-listed URLs for redirects
+
+import ssl
+from requests.adapters import HTTPAdapter
 
 _HEADERS = {
-    "User-Agent": "PhishShieldAI/1.0 (+url-expansion)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "*/*",
 }
+
+
+class _ExpanderSSLAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = ssl.create_default_context()
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
+
+
+def _get_expander_session() -> requests.Session:
+    session = requests.Session()
+    session.mount("https://", _ExpanderSSLAdapter())
+    return session
 
 # Known URL-shortener hostnames (bare registrable domain, no www.)
 SHORTENER_DOMAINS: frozenset[str] = frozenset({
@@ -212,23 +228,42 @@ def _probe_and_expand(url: str, *, max_hops: int) -> ExpansionResult:
                 message=f"SSRF validation blocked hop {hop}: {exc}",
             )
 
+        session = _get_expander_session()
         try:
-            resp = requests.head(
-                safe_current,
-                headers=_HEADERS,
-                timeout=HOP_TIMEOUT_S,
-                allow_redirects=False,
-                stream=False,
-            )
-            # Some servers don't honour HEAD; fall back to GET with no body.
-            if resp.status_code == 405:
-                resp = requests.get(
+            try:
+                resp = session.head(
                     safe_current,
                     headers=_HEADERS,
                     timeout=HOP_TIMEOUT_S,
                     allow_redirects=False,
-                    stream=True,
+                    stream=False,
                 )
+            except requests.exceptions.SSLError:
+                resp = requests.head(
+                    safe_current,
+                    headers=_HEADERS,
+                    timeout=HOP_TIMEOUT_S,
+                    allow_redirects=False,
+                    stream=False,
+                )
+            # Some servers don't honour HEAD; fall back to GET with no body.
+            if resp.status_code in (403, 405):
+                try:
+                    resp = session.get(
+                        safe_current,
+                        headers=_HEADERS,
+                        timeout=HOP_TIMEOUT_S,
+                        allow_redirects=False,
+                        stream=True,
+                    )
+                except requests.exceptions.SSLError:
+                    resp = requests.get(
+                        safe_current,
+                        headers=_HEADERS,
+                        timeout=HOP_TIMEOUT_S,
+                        allow_redirects=False,
+                        stream=True,
+                    )
                 # Discard the body immediately — we only want headers.
                 resp.close()
         except requests.exceptions.ConnectionError as exc:

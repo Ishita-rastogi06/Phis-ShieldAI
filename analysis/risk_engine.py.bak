@@ -28,23 +28,10 @@ def calculate_verdict(*, providers: dict, brand_similarity: int, trusted_domain:
     if providers.get("openphish", {}).get("malicious") and local_reasons:
         reasons.append("Rule: OpenPhish feed match corroborated by local phishing indicators")
         return "LIKELY_PHISHING", 70, "high", reasons + local_reasons
-
-    # High-risk combination: strong brand impersonation / variation + multiple local phishing signals
-    # Works even when the target website is offline or DNS lookup fails
-    if brand_similarity >= 75 and len(local_reasons) >= 2:
-        reasons.append("Rule: strong brand impersonation combined with multiple local phishing indicators")
-        return "LIKELY_PHISHING", min(90, 75 + 5 * (len(local_reasons) - 2)), "high", reasons + local_reasons
-    if brand_similarity >= 60 and len(local_reasons) >= 3:
-        reasons.append("Rule: brand similarity combined with multiple structural and keyword phishing indicators")
-        return "LIKELY_PHISHING", 75, "high", reasons + local_reasons
-    if len(local_reasons) >= 4:
-        reasons.append("Rule: multiple strong lexical, structural, and keyword phishing indicators")
-        return "LIKELY_PHISHING", min(85, 70 + 3 * (len(local_reasons) - 4)), "high", reasons + local_reasons
-
     suspicious_count = len(local_reasons) + (1 if brand_similarity >= 65 else 0) + (1 if malicious else 0)
     if suspicious_count >= 2:
         reasons.append("Rule: multiple local or reputation indicators require review")
-        return "SUSPICIOUS", min(65, 35 + suspicious_count * 10), "moderate", reasons + local_reasons
+        return "SUSPICIOUS", min(65, 30 + suspicious_count * 10), "moderate", reasons + local_reasons
     # A legitimate conclusion requires affirmative observations, not merely a
     # reputation-provider no-match. DNS is intentionally supportive rather
     # than mandatory: an authoritative site can be reachable through HTTPS

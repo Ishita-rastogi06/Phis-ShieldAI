@@ -131,18 +131,12 @@ def _lexical_risk_assessment(raw_url: str) -> tuple[str, int, str, list[str]]:
     score += 35 if similarity >= 85 else (15 if similarity >= 65 else 0)
     score += 20 if tld in _SUSPICIOUS_TLDS else 0
     score += 20 if re.search(r"^\d{1,3}(\.\d{1,3}){3}$", host) else 0
-    score += min(len(high_hits) * 15 + len(med_hits) * 8, 30)
+    score += min(len(high_hits) * 12 + max(len(med_hits) - 1, 0) * 6, 24)
     score += 10 if label.count("-") >= 2 else 0
     score += 10 if sub_count >= 3 else 0
     score += 5  if len(raw_url) > 100 else 0
     # Combo boost: brand impersonation + suspicious TLD
     if similarity >= 65 and tld in _SUSPICIOUS_TLDS:
-        score += 15
-    # Combo boost: brand impersonation + multiple hyphens
-    if similarity >= 65 and label.count("-") >= 2:
-        score += 10
-    # Combo boost: brand impersonation + phishing keywords
-    if similarity >= 65 and (high_hits or len(med_hits) >= 2):
         score += 15
     score = min(score, 95)
 
@@ -385,24 +379,30 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
 
     # ── Stage 3: assemble provider evidence ──────────────────────────────────
     remote_value = values.get("remote", {})
-    remote = remote_value if isinstance(remote_value, dict) else {}
+    remote = remote_value if isinstance(remote_value, dict) and any(
+        name in remote_value for name in ("virustotal", "urlscan", "urlhaus", "openphish")) else {}
 
+    # Log whether collect_remote returned recognisable provider keys at all.
+    log_scan_stage("remote_raw", normalized_url=normalized,
+                   remote_type=type(remote_value).__name__,
+                   remote_keys=list(remote_value.keys()) if isinstance(remote_value, dict) else [],
+                   recognised_provider_keys=list(remote.keys()))
+
+    # Preserve malformed adapter output as explicit error evidence.  A single
+    # provider must never be able to abort aggregation of the other sources.
     provider_names = ("virustotal", "urlscan", "urlhaus", "openphish")
     fallback_reason = (remote_value.get("reason") if isinstance(remote_value, dict) else None) or "Provider did not return a result"
-    providers = {}
+    providers = {name: item if isinstance(item, dict) else result(name, ERROR, reason="Provider returned malformed evidence")
+                 for name, item in remote.items()}
     for name in provider_names:
-        item = remote.get(name)
-        if isinstance(item, dict):
-            providers[name] = item
-        else:
-            providers[name] = result(name, UNAVAILABLE, reason=fallback_reason)
+        providers.setdefault(name, result(name, UNAVAILABLE, reason=fallback_reason))
 
     log_scan_stage("remote_complete", normalized_url=normalized,
                    provider_statuses={name: item.get("status") for name, item in providers.items()})
     website = values.get("website", _unavailable("website", "missing")); tls = values.get("tls", _unavailable("tls", "missing")); dns = values.get("dns", _unavailable("dns", "missing")); whois = values.get("whois")
     model = values.get("model", {"model_available": False, "prediction": None, "error": "legacy model unavailable"})
     brand, similarity = detect_brand(normalized)
-    local = explain_threat(model.get("prediction"), similarity, tls.get("https", False), normalized, website.get("title"))
+    local = explain_threat(None, similarity, tls.get("https", False), normalized, website.get("title"))
     if tls.get("https") and tls.get("connected") and not tls.get("certificate_valid"): local.append("TLS certificate validation failed")
     if whois and whois.get("age_days") is not None and whois["age_days"] < 30: local.append("Domain registration is less than 30 days old")
     if website.get("reachable") and website.get("iframes", 0): local.append("Passive inspection observed embedded frame content")
