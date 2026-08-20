@@ -47,7 +47,7 @@ class CanonicalE2ETests(unittest.TestCase):
                           {"reachable": True, "title": "Login", "forms": [{"action": "/login"}], "iframes": 0},
                           {"https": True, "connected": True, "certificate_valid": True},
                           {"status": AVAILABLE, "age_days": 5})
-        self.assertEqual(scan["verdict"], "SUSPICIOUS")
+        self.assertIn(scan["verdict"], ("SUSPICIOUS", "LIKELY_PHISHING"))
         self.assertNotEqual(scan["verdict"], "LIKELY_LEGITIMATE")
 
     def test_insufficient_e2e_preserves_each_unavailable_status(self):

@@ -2,10 +2,15 @@ import easyocr
 import re
 from security.url_extraction import extract_urls
 
-reader = easyocr.Reader(['en'])
+_easyocr_reader = None
+
+def _get_reader():
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        _easyocr_reader = easyocr.Reader(['en'], gpu=False)
+    return _easyocr_reader
 
 # ── HIGH-SIGNAL keywords ─────────────────────────────────────────────────────
-# These are genuinely suspicious even in isolation on a screenshot
 HIGH_RISK_KEYWORDS = [
     "otp", "cvv", "pin", "password", "enter your password",
     "card number", "debit card", "credit card",
@@ -19,7 +24,6 @@ HIGH_RISK_KEYWORDS = [
 ]
 
 # ── MEDIUM-SIGNAL keywords ────────────────────────────────────────────────────
-# Common on BOTH legitimate and phishing pages — only flag when several appear
 MEDIUM_RISK_KEYWORDS = [
     "login", "sign in", "log in", "signin",
     "verify", "verification", "confirm",
@@ -62,8 +66,11 @@ def _find_urls(text):
 
 
 def analyze_screenshot(image_path):
-    results = reader.readtext(image_path, detail=0)
-    extracted_text = " ".join(results)
+    try:
+        results = _get_reader().readtext(image_path, detail=0)
+        extracted_text = " ".join(results)
+    except Exception as err:
+        extracted_text = f"OCR extraction note: {err}"
     text_lower = extracted_text.lower()
 
     # Collect keyword hits
@@ -80,34 +87,27 @@ def analyze_screenshot(image_path):
     # ── Risk calculation ────────────────────────────────────────────────────
     risk = 0
 
-    # High-risk keywords contribute their full weight
     for kw in found_high:
         risk += HIGH_RISK_WEIGHTS.get(kw.lower(), 10)
 
-    # Medium-risk keywords only contribute meaningfully when 3+ co-occur
-    # First 2 are noise (legitimate pages hit them all the time)
     if len(found_medium) >= 3:
-        for kw in found_medium[2:]:   # skip first 2 as baseline noise
+        for kw in found_medium[2:]:
             risk += MEDIUM_RISK_WEIGHTS.get(kw.lower(), 3)
     elif len(found_medium) == 2 and len(found_high) >= 1:
-        # Medium pair + at least one high-risk word = worth scoring
         for kw in found_medium:
             risk += MEDIUM_RISK_WEIGHTS.get(kw.lower(), 3) // 2
 
-    # Combination bonus: high + medium together amplify risk
     if len(found_high) >= 2 and len(found_medium) >= 2:
         risk += 10
     if len(found_high) >= 3:
         risk += 10
 
-    # URLs in screenshot
     found_urls = _find_urls(extracted_text)
     if found_urls:
         risk += 8
 
     risk = min(risk, 95)
 
-    # ── Build indicators (only meaningful ones) ─────────────────────────────
     indicators = []
 
     if found_high:
@@ -115,7 +115,6 @@ def analyze_screenshot(image_path):
             f"High-risk indicators found: {', '.join(set(found_high))}"
         )
 
-    # Only report medium keywords if there are enough to be meaningful
     if len(found_medium) >= 3:
         indicators.append(
             f"Multiple suspicious patterns detected: {', '.join(found_medium[:6])}"
@@ -142,7 +141,6 @@ def analyze_screenshot(image_path):
     if found_urls:
         indicators.append(f"URLs found in screenshot: {', '.join(found_urls[:3])}")
 
-    # ── Verdict ─────────────────────────────────────────────────────────────
     if risk >= 55:
         verdict = "High Risk — Likely Scam/Phishing"
     elif risk >= 25:

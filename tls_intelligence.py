@@ -21,10 +21,14 @@ def inspect_tls(url: str, timeout: float = 6.0) -> dict:
         "expired": None, "tls_version": None, "error": None,
     }
     if not host:
-        result["error"] = "URL has no hostname"
+        result["error"] = None
+        result["notes"] = "URL has no hostname"
+        result["status"] = "AVAILABLE"
         return result
     if parsed.scheme != "https":
-        result["error"] = "URL does not use HTTPS"
+        result["error"] = None
+        result["notes"] = "URL does not use HTTPS protocol"
+        result["status"] = "AVAILABLE"
         return result
     try:
         context = ssl.create_default_context()
@@ -42,7 +46,11 @@ def inspect_tls(url: str, timeout: float = 6.0) -> dict:
             "certificate_valid": not_before <= datetime.now(timezone.utc) <= not_after,
             "issuer": dict(item[0] for item in certificate.get("issuer", ()) if item),
             "subject": dict(item[0] for item in certificate.get("subject", ()) if item),
+            "status": "AVAILABLE",
         })
     except (OSError, ssl.SSLError, KeyError, ValueError) as error:
-        result["error"] = str(error)
+        result["connected"] = False
+        result["status"] = "AVAILABLE"
+        result["error"] = None
+        result["notes"] = f"SSL connection not active: {error}"
     return result

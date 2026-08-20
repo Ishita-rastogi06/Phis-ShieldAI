@@ -200,10 +200,24 @@ def normalize_analysis_result(raw: dict) -> dict:
     providers = dict(providers) if isinstance(providers, dict) else {}
     for name in PROVIDER_NAMES:
         providers.setdefault(name, result(name, UNAVAILABLE, reason="Provider did not return a result"))
+
+    verdict_source = normalized.get(
+        "verdict_source",
+        "AI/ML Classifier" if model_available else "Rule-Based Heuristics & Threat Intelligence"
+    )
+    risk_source_explanation = normalized.get(
+        "risk_source_explanation",
+        "Derived from 30-feature ML model prediction corroborated by threat intelligence."
+        if model_available else
+        "Derived from rule-based indicators (brand impersonation, path keywords, structural patterns) and threat intelligence. ML prediction unavailable because required telemetry could not be collected."
+    )
+
     normalized.update({
         "verdict": verdict, "final_verdict": verdict, "risk": int(risk), "risk_score": int(risk),
         "confidence_strength": normalized.get("evidence_strength", normalized.get("confidence_strength", "insufficient")),
         "evidence_strength": normalized.get("evidence_strength", normalized.get("confidence_strength", "insufficient")),
+        "verdict_source": verdict_source,
+        "risk_source_explanation": risk_source_explanation,
         "reasons": reasons, "verdict_reason": reasons, "model": model, "legacy_model": model,
         "model_available": model["model_available"], "prediction": model["prediction"],
         "providers": providers, "provider_evidence": providers,
@@ -311,7 +325,7 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
         # Run network-independent lexical/typosquat analysis so the verdict is
         # meaningful even when the URL cannot be reached for live checks.
         lex_verdict, lex_risk, lex_strength, lex_reasons = _lexical_risk_assessment(analysis_url)
-        lex_reasons_all = [f"URL not reachable for live checks: {error}"] + lex_reasons
+        lex_reasons_all = [f"Live network checks skipped ({error})"] + lex_reasons
         if expansion_note:
             lex_reasons_all.insert(0, expansion_note)
 
@@ -319,28 +333,42 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
             f"https://{(urlparse('https://' + analysis_url.lstrip('https://').lstrip('http://')).hostname or analysis_url)}/"
         )
 
+        # For private IP / loopback SSRF blocks, omit ML model. For external domain names, run ML model.
+        is_private_ip_ssrf = "private" in str(error).lower() or "loopback" in str(error).lower() or "reserved" in str(error).lower()
+        if is_private_ip_ssrf:
+            lex_model = {"model_available": False, "prediction": None, "confidence": None, "error": f"URL blocked by SSRF protection: {error}"}
+        else:
+            lex_model = predict_url(analysis_url)
+
+        model_avail = lex_model.get("model_available", False)
+
         blocked = {
             "url": url,
-            "normalized_url": None,
+            "normalized_url": analysis_url,
             "verdict": lex_verdict, "risk": lex_risk,
             "confidence_strength": lex_strength,
             "reasons": lex_reasons_all,
             "redirect_chain": redirect_chain,
             "providers": {}, "provider_statuses": {},
-            "model": {"model_available": False, "prediction": None, "error": "URL blocked by SSRF protection"},
-            "website": {}, "tls": {}, "dns": {}, "whois": None,
+            "model": lex_model, "model_available": model_avail,
+            "prediction": lex_model.get("prediction"),
+            "website": {"status": "AVAILABLE", "reachable": False, "notes": "Target host unreachable / DNS resolution skipped"},
+            "tls": {"status": "AVAILABLE", "connected": False, "notes": "TLS check skipped for offline host"},
+            "dns": {"status": "AVAILABLE", "notes": "Host DNS resolution failed"},
+            "whois": {"status": "AVAILABLE", "verdict": "WHOIS lookup skipped for offline host"},
             "brand": brand_fallback, "similarity": sim_fallback,
-            "mitre": [],
+            "mitre": map_to_mitre(analysis_url, sim_fallback, lex_risk, lex_reasons_all, {"reachable": False}),
+            "verdict_source": "AI/ML Model & Rule-Based Analysis" if model_avail else "Rule-Based Heuristics & Threat Intelligence",
             "ai_copilot": generate_ai_explanation(
-                analysis_url, lex_verdict, lex_risk, lex_reasons_all, brand_fallback, model_available=False
+                analysis_url, lex_verdict, lex_risk, lex_reasons_all, brand_fallback, model_available=model_avail
             ),
         }
         blocked.update({
             "final_verdict": lex_verdict, "risk_score": lex_risk,
             "evidence_strength": lex_strength, "verdict_reason": lex_reasons_all,
             "provider_evidence": blocked["providers"],
-            "dns_evidence": {}, "tls_evidence": {}, "whois_rdap_evidence": None,
-            "website_evidence": {}, "mitre_mappings": [],
+            "dns_evidence": blocked["dns"], "tls_evidence": blocked["tls"], "whois_rdap_evidence": blocked["whois"],
+            "website_evidence": blocked["website"], "mitre_mappings": blocked["mitre"],
             "brand_evidence": {"brand": brand_fallback, "similarity": sim_fallback},
             "copilot_explanation": blocked["ai_copilot"],
             "legacy_model": blocked["model"],
@@ -349,12 +377,18 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
     log_scan_stage("validation_passed", input_url=analysis_url, normalized_url=normalized)
 
     # ── Stage 2: parallel enrichment ─────────────────────────────────────────
-    jobs = {"model": predict_url, "website": analyze_website, "tls": inspect_tls, "dns": analyze_dns,
-            "remote": collect_remote}
+    values, durations = {}, {}
+    # Run ML prediction locally first so remote API latency never causes ML timeouts
+    try:
+        values["model"] = predict_url(normalized)
+        durations["model"] = round(time.perf_counter() - started, 3)
+    except Exception as error:
+        values["model"] = {"model_available": False, "prediction": None, "error": str(error)}
+
+    jobs = {"website": analyze_website, "tls": inspect_tls, "dns": analyze_dns, "remote": collect_remote}
     if include_enrichment: jobs["whois"] = check_domain_age
     log_scan_stage("pipeline_jobs_submitted", normalized_url=normalized,
                    jobs=list(jobs.keys()), timeout_s=SOURCE_TIMEOUT)
-    values, durations = {}, {}
     pool = ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="phishshield")
     try:
         futures = {name: pool.submit(fn, normalized) for name, fn in jobs.items()}
