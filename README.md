@@ -3,6 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Application-FF4B4B?logo=streamlit&logoColor=white)
 ![Machine Learning](https://img.shields.io/badge/Machine%20Learning-scikit--learn-F7931E)
+![SQLite](https://img.shields.io/badge/Database-SQLite3-003B57?logo=sqlite&logoColor=white)
 ![Cybersecurity](https://img.shields.io/badge/Domain-Cybersecurity-1D9E75)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -15,6 +16,7 @@ The model ships **pre-trained** — no dataset download or training step is requ
 ## Table of Contents
 
 - [Overview](#overview)
+- [Tech Stack](#tech-stack)
 - [Key Features](#key-features)
 - [Architecture](#architecture)
 - [Model Performance](#model-performance)
@@ -38,6 +40,25 @@ PhishShield AI accepts a **URL, raw email text, QR code image, or screenshot**. 
 4. A deterministic, evidence-grounded risk engine combines all signals into a LOW / MEDIUM / HIGH / CRITICAL verdict with a MITRE ATT&CK technique mapping.
 
 If a required live source is unreachable, the app reports that source as **unavailable** rather than fabricating a result.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Language | Python 3.13 |
+| UI / App Framework | Streamlit |
+| Machine Learning | scikit-learn (Random Forest), joblib |
+| Database / Persistence | SQLite3 (local persistent DB with per-browser cookie isolation) |
+| Data Handling | pandas, NumPy |
+| Charts | Plotly |
+| Web / Network | requests, BeautifulSoup4, dnspython, python-whois, tldextract |
+| QR Decoding | ZXing-C++, PyZbar, OpenCV (fallback chain) |
+| Screenshot OCR | EasyOCR (PyTorch backend) |
+| PDF Reports | ReportLab |
+| Threat Intelligence | VirusTotal API v3, OpenPhish feed |
+| Testing | pytest |
 
 ---
 
@@ -91,7 +112,7 @@ Confusion matrix (held-out set): TP 419, TN 398, FP 27, FN 34.
 
 > **Important:** these are benchmark metrics on a historical, held-out academic dataset (OpenML 4534). They demonstrate the model was trained and validated correctly, but they are **not a guarantee of equivalent accuracy on live, real-world URLs** — phishing patterns evolve over time. This is why the app never scores on ML alone; DNS, TLS, WHOIS, brand-similarity, and VirusTotal/OpenPhish signals are combined with the model output in the final risk decision.
 
-A legacy 30-feature artifact (`url_lexical_detector.joblib`) is also bundled for reference/feature-importance visualization only — it is **not** used for live scoring.
+A legacy 30-feature artifact was previously bundled for a dashboard feature-importance visualization, but has been removed to keep a single source of truth — the feature-importance chart now reads directly from the same 25-feature model used for live scoring.
 
 ---
 
@@ -135,14 +156,6 @@ EMAIL_MODEL_URL=
 EMAIL_VECTORIZER_URL=
 ```
 
-### Provider Diagnostics Check
-
-To verify API key validity, provider reachability, and canonical scan traces from CLI:
-
-```powershell
-python -m diagnostics.provider_health_check
-```
-
 ---
 
 ## Project Structure
@@ -167,7 +180,6 @@ history_manager.py                 In-session scan history
 report_generator.py                Downloadable report generation
 security/                          SSRF protection & input validation
 intelligence/                      Provider adapters (OpenPhish, etc.)
-diagnostics/provider_health_check.py  Standalone provider connectivity & scan trace check
 training/train_live_25_model.py    Retraining script (optional, maintainers only)
 ```
 
@@ -187,7 +199,7 @@ This fetches OpenML dataset 4534, removes exact duplicate rows, performs a deter
 
 ## Known Limitations
 
-- **Scan history is session-scoped.** History currently lives in `st.session_state` and is not written to disk, so it resets on a browser refresh or server restart. Persistent, per-user history is on the [roadmap](#roadmap).
+- **Scan history is stored locally per-browser via SQLite + cookie.** History is persisted in `history.db` using a 1-year browser cookie identifier (`phishshield_user_id`), isolating each user's history locally across browser refreshes and server restarts without syncing across different devices or browsers.
 - **Email ML classifier is not bundled.** Email analysis extracts and scores embedded URLs through the same live pipeline, but there is no dedicated trained email classifier yet.
 - **Model accuracy is a historical benchmark**, not a live-world guarantee (see [Model Performance](#model-performance)).
 - **Live scoring depends on network reachability.** If the target page, DNS, WHOIS, or VirusTotal cannot be reached, that source is reported as unavailable rather than assumed safe.
@@ -198,7 +210,7 @@ This is a decision-support tool intended for a college ML/security project — n
 
 ## Roadmap
 
-- [ ] Persistent per-user scan history (SQLite + browser-scoped identifier)
+- [x] Persistent per-user scan history (SQLite + browser-scoped identifier)
 - [ ] Parallelized threat-intelligence lookups for faster scans
 - [ ] Dedicated email phishing classifier
 - [ ] Dockerized deployment

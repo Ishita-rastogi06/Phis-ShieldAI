@@ -20,7 +20,7 @@ import whois
 from bs4 import BeautifulSoup
 from security.tldextract_config import offline_extractor
 
-FEATURE_SCHEMA_VERSION = "uci-all-30-v1"
+FEATURE_SCHEMA_VERSION = "uci-live-25-v1"
 URL_FEATURE_NAMES = [
     "having_IP_Address", "URL_Length", "Shortining_Service", "having_At_Symbol",
     "double_slash_redirecting", "Prefix_Suffix", "having_Sub_Domain", "SSLfinal_State",

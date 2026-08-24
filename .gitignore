@@ -45,7 +45,6 @@ secrets.toml
 *.pt
 *.pth
 models/artifacts/*.joblib
-!models/artifacts/url_lexical_detector.joblib
 !models/artifacts/url_live_25_detector.joblib
 
 # Large datasets — commit only small sample files
@@ -55,6 +54,10 @@ phishing_email_dataset.csv
 # ========================
 # Scan History & Logs
 # ========================
+history.db
+*.db
+*.sqlite
+*.sqlite3
 scan_history.csv
 *.log
 

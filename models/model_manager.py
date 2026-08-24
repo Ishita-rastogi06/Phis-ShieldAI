@@ -33,9 +33,9 @@ def _sha256(path: Path) -> str:
 
 
 def _validate_artifact(model_key: str, artifact: Any) -> bool:
-    if model_key in ("url_detector", "url_live_25_detector"):
+    if model_key == "url_live_25_detector":
         config = MODEL_REGISTRY[model_key]
-        expected_cnt = 25 if model_key == "url_live_25_detector" else 30
+        expected_cnt = 25
         return (
             isinstance(artifact, dict)
             and artifact.get("schema_version") == config["schema_version"]

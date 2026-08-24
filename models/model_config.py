@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from feature_extractor import FEATURE_SCHEMA_VERSION, URL_FEATURE_NAMES, LIVE_25_FEATURE_NAMES
+from feature_extractor import LIVE_25_FEATURE_NAMES
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -16,14 +16,6 @@ MODEL_REGISTRY = {
         "download_url": None,
         "schema_version": "uci-live-25-v1",
         "feature_names": LIVE_25_FEATURE_NAMES,
-    },
-    "url_detector": {
-        "filename": "url_lexical_detector.joblib",
-        "display_name": "LEGACY UCI 30-FEATURE MODEL",
-        "download_env": "URL_MODEL_URL",
-        "download_url": None,
-        "schema_version": FEATURE_SCHEMA_VERSION,
-        "feature_names": URL_FEATURE_NAMES,
     },
     # Email artifacts are deliberately separate.  No synthetic model is used
     # when a legitimate, versioned email artifact has not been supplied.

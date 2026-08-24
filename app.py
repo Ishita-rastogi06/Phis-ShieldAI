@@ -58,6 +58,14 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide"
 )
+
+try:
+    import extra_streamlit_components as stx
+    from history_manager import get_or_create_user_id
+    _cookie_mgr = stx.CookieManager(key="phishshield_cookies")
+    get_or_create_user_id(_cookie_mgr)
+except Exception:
+    pass
 st.markdown("""
 <style>
 :root { --bg:#18181b; --surface:#27272a; --surface-soft:rgba(39,39,42,.78); --line:rgba(244,244,245,.12); --text:#f4f4f5; --muted:#a1a1aa; --crimson:#e11d48; --crimson-deep:#be123c; --danger:#fb7185; --warning:#fbbf24; --success:#86efac; }
@@ -84,57 +92,24 @@ hr { border-color:var(--line) !important; } .stCaption { color:var(--muted) !imp
 </style>
 """, unsafe_allow_html=True)
 
-
-
-
-st.markdown("""
-<style>
-:root { --bg:#0A0D12; --sidebar:#07090E; --surface:#121820; --glass:rgba(18,24,32,.84); --line:#1E293B; --text:#FFFFFF; --muted:#94A3B8; --emerald:#10B981; }
-#MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stDeployButton"] { display:none !important; }
-.stApp,[data-testid="stAppViewContainer"] { background:radial-gradient(circle at 75% -25%,rgba(16,185,129,.07),transparent 35%),var(--bg) !important; color:var(--text) !important; }.block-container { padding-top:1.7rem !important; max-width:1440px !important; }
-section[data-testid="stSidebar"] { background:var(--sidebar) !important; border-right:1px solid var(--line) !important; } section[data-testid="stSidebar"] > div { padding:1.25rem .7rem; } section[data-testid="stSidebar"] label p { color:var(--muted) !important; font-size:.76rem !important; font-weight:850; letter-spacing:.12em; }
-section[data-testid="stSidebar"] [data-baseweb="radio"] > div { padding:.58rem .65rem; border:1px solid transparent; border-radius:9px; transition:all .16s ease; } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:hover { background:#101722; border-color:#223144; } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:has(input:checked) { background:rgba(16,185,129,.12); border-color:rgba(16,185,129,.42); box-shadow:inset 3px 0 0 var(--emerald); }
-[data-testid="stMetric"], [data-testid="stExpander"] { background:var(--glass) !important; border:1px solid var(--line) !important; box-shadow:0 12px 30px rgba(0,0,0,.28); border-radius:12px; backdrop-filter:blur(10px); } [data-testid="stMetric"]:hover { border-color:rgba(16,185,129,.62) !important; box-shadow:0 0 0 1px rgba(16,185,129,.16),0 0 22px rgba(16,185,129,.1); } [data-testid="stMetricLabel"] { color:var(--muted) !important; font-size:.68rem !important; letter-spacing:.1em; }
-.stButton>button,[data-testid="stDownloadButton"] button { background:var(--emerald) !important; color:#03140D !important; border:1px solid #34D399 !important; border-radius:8px; box-shadow:0 7px 20px rgba(16,185,129,.2); }.stButton>button:hover,[data-testid="stDownloadButton"] button:hover { background:#34D399 !important; box-shadow:0 0 25px rgba(16,185,129,.32); }.stTextInput input,.stTextArea textarea { background:#0E141C !important; border-color:#334155 !important; }.stTextInput input:focus,.stTextArea textarea:focus { border-color:var(--emerald) !important; box-shadow:0 0 0 1px var(--emerald),0 0 16px rgba(16,185,129,.14) !important; }
-.soc-header { display:flex; align-items:center; gap:14px; margin:0 0 1.5rem; padding:16px 18px; background:var(--glass); border:1px solid var(--line); border-radius:12px; backdrop-filter:blur(10px); box-shadow:0 10px 30px rgba(0,0,0,.24); }.soc-icon { width:42px; height:42px; border-radius:10px; display:grid; place-items:center; background:rgba(16,185,129,.13); border:1px solid rgba(16,185,129,.5); color:#6EE7B7; font-size:1.25rem; }.soc-copy { flex:1; }.soc-title { font-size:1.25rem; font-weight:850; }.soc-subtitle { color:var(--muted); font-size:.78rem; margin-top:2px; }.soc-tag { color:#CBD5E1; background:#0B1017; border:1px solid #334155; padding:6px 9px; border-radius:5px; font-size:.65rem; font-weight:800; letter-spacing:.11em; }
-</style><div class="soc-header"><div class="soc-icon">🛡</div><div class="soc-copy"><div class="soc-title">Phis-ShieldAI</div><div class="soc-subtitle">Threat Intelligence, Detection &amp; Response</div></div><div class="soc-tag">SECURITY OPERATIONS CENTER</div></div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-/* Flat enterprise application override: intentionally no gradients, glow, or shadows. */
-:root { --page:#F8FAFC; --card:#FFFFFF; --border:#E2E8F0; --sidebar:#1E293B; --ink:#0F172A; --muted:#64748B; --side-text:#94A3B8; --active:#334155; --emerald:#059669; --crimson:#DC2626; --amber:#D97706; }
-html,body,[data-testid="stAppViewContainer"],.stApp { background:var(--page) !important; color:var(--ink) !important; font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif !important; }
-.stApp { background:var(--page) !important; } .block-container { max-width:1380px !important; padding-top:1.5rem !important; }
-section[data-testid="stSidebar"] { background:var(--sidebar) !important; border-right:0 !important; } section[data-testid="stSidebar"] > div { padding:1.25rem .75rem; } section[data-testid="stSidebar"] * { color:var(--side-text) !important; }
-section[data-testid="stSidebar"] label p { color:var(--side-text) !important; font-size:.74rem !important; font-weight:750 !important; letter-spacing:.09em; }
-section[data-testid="stSidebar"] [data-baseweb="radio"] > div { border-radius:6px !important; border:0 !important; padding:.62rem .7rem !important; } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:hover { background:#27364a !important; } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:has(input:checked) { background:var(--active) !important; box-shadow:none !important; } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:has(input:checked) * { color:#FFFFFF !important; }
-h1,h2,h3,h4,p,label,.stMarkdown { color:var(--ink) !important; font-family:Inter,system-ui,sans-serif !important; } h1 { font-size:1.75rem !important; font-weight:750 !important; } h2 { font-size:1.25rem !important; font-weight:700 !important; } h3 { font-size:1rem !important; font-weight:700 !important; }
-.soc-header { background:var(--card) !important; border:1px solid var(--border) !important; border-radius:6px !important; box-shadow:none !important; backdrop-filter:none !important; margin-bottom:1.25rem !important; }.soc-icon { background:#ECFDF5 !important; border:1px solid #A7F3D0 !important; color:var(--emerald) !important; border-radius:6px !important; }.soc-title { color:var(--ink) !important; }.soc-subtitle { color:var(--muted) !important; }.soc-tag { background:#F1F5F9 !important; border:1px solid var(--border) !important; color:var(--muted) !important; }
-[data-testid="stMetric"],[data-testid="stExpander"] { background:var(--card) !important; border:1px solid var(--border) !important; border-radius:6px !important; box-shadow:none !important; backdrop-filter:none !important; padding:14px !important; } [data-testid="stMetric"]:hover { border-color:var(--border) !important; box-shadow:none !important; } [data-testid="stMetricLabel"] { color:var(--muted) !important; font-size:.68rem !important; font-weight:750 !important; letter-spacing:.08em; } [data-testid="stMetricValue"] { color:var(--ink) !important; font-weight:800 !important; }
-.stButton>button,[data-testid="stDownloadButton"] button { background:var(--emerald) !important; color:#FFFFFF !important; border:1px solid var(--emerald) !important; border-radius:5px !important; box-shadow:none !important; font-weight:700 !important; }.stButton>button:hover,[data-testid="stDownloadButton"] button:hover { background:#047857 !important; border-color:#047857 !important; box-shadow:none !important; }
-.stTextInput input,.stTextArea textarea { background:#FFFFFF !important; color:var(--ink) !important; border:1px solid #CBD5E1 !important; border-radius:5px !important; }.stTextInput input:focus,.stTextArea textarea:focus { border-color:var(--emerald) !important; box-shadow:0 0 0 1px var(--emerald) !important; }
-[data-testid="stAlert"] { background:#FFFFFF !important; border:1px solid var(--border) !important; border-radius:5px !important; color:var(--ink) !important; } [data-testid="stExpander"] summary { color:var(--ink) !important; } [data-testid="stDataFrame"] { border:1px solid var(--border) !important; border-radius:6px !important; } [data-testid="stDataFrame"] * { color:var(--ink) !important; } hr { border-color:var(--border) !important; } .stCaption { color:var(--muted) !important; }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
+st.markdown("""
 <style>
 /* Warm taupe/sand enterprise theme override. No Streamlit chrome or default radio visuals. */
 :root { --sand:#C5B08A; --taupe:#4A2C24; --cream:#FDFBF7; --espresso:#2C221E; --muted-taupe:#5A4840; --border:#A89370; --chestnut:#F4A261; --peach-hover:#E98E73; }
 #MainMenu,header,footer,[data-testid="stToolbar"],[data-testid="stDecoration"],[data-testid="stDeployButton"] { display:none !important; }
 html,body,.stApp,[data-testid="stAppViewContainer"] { background:var(--sand) !important; color:var(--espresso) !important; }
-.block-container { max-width:1380px !important; padding-top:1.5rem !important; }
+.block-container { max-width:1380px !important; padding-top:0.4rem !important; }
 section[data-testid="stSidebar"] { background:var(--taupe) !important; border-right:0 !important; } section[data-testid="stSidebar"] > div { padding:1.35rem .78rem; }
 section[data-testid="stSidebar"] * { color:var(--cream) !important; } section[data-testid="stSidebar"] label p { color:var(--cream) !important; font-size:.76rem !important; font-weight:800 !important; letter-spacing:.09em; }
 section[data-testid="stSidebar"] [data-baseweb="radio"] > div { width:100%; padding:.72rem .82rem; margin:.15rem 0; border:0 !important; border-radius:8px; transition:background .16s ease,transform .16s ease; } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:hover { background:rgba(253,251,247,.17) !important; transform:translateX(1px); } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:has(input:checked) { background:var(--cream) !important; box-shadow:0 4px 12px rgba(0,0,0,.08) !important; } section[data-testid="stSidebar"] [data-baseweb="radio"] > div:has(input:checked) * { color:var(--espresso) !important; } section[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"] > div:first-child { display:none !important; }
 h1,h2,h3,h4,p,label,.stMarkdown { color:var(--espresso) !important; font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif !important; } h1 { font-weight:800 !important; } .stCaption { color:var(--muted-taupe) !important; }
-.soc-header { background:var(--cream) !important; border:1px solid var(--border) !important; border-radius:10px !important; box-shadow:none !important; backdrop-filter:none !important; }.soc-icon { background:#F4EDE4 !important; border:1px solid var(--border) !important; color:var(--chestnut) !important; border-radius:8px !important; }.soc-title { color:var(--espresso) !important; }.soc-subtitle { color:var(--muted-taupe) !important; }.soc-tag { background:#F4EDE4 !important; border:1px solid var(--border) !important; color:var(--muted-taupe) !important; }
+.soc-header { background:var(--cream) !important; border:1px solid var(--border) !important; border-radius:10px !important; box-shadow:none !important; backdrop-filter:none !important; margin-top:0px !important; margin-bottom:12px !important; display:flex; align-items:center; gap:14px; padding:12px 18px; }.soc-icon { background:#F4EDE4 !important; border:1px solid var(--border) !important; color:var(--chestnut) !important; border-radius:8px !important; width:40px; height:40px; display:grid; place-items:center; font-size:1.2rem; }.soc-copy { flex:1; }.soc-title { color:var(--espresso) !important; font-size:1.25rem; font-weight:850; }.soc-subtitle { color:var(--muted-taupe) !important; font-size:.78rem; margin-top:2px; }.soc-tag { background:#F4EDE4 !important; border:1px solid var(--border) !important; color:var(--muted-taupe) !important; padding:4px 8px; border-radius:5px; font-size:.65rem; font-weight:800; letter-spacing:.11em; }
 [data-testid="stMetric"],[data-testid="stExpander"],[data-testid="stAlert"] { background:var(--cream) !important; border:1px solid var(--border) !important; border-radius:10px !important; box-shadow:none !important; backdrop-filter:none !important; } [data-testid="stMetric"]:hover { border-color:var(--border) !important; box-shadow:none !important; } [data-testid="stMetricLabel"] { color:var(--muted-taupe) !important; } [data-testid="stMetricValue"] { color:var(--espresso) !important; }
 .stButton>button,[data-testid="stDownloadButton"] button { background:var(--chestnut) !important; color:var(--espresso) !important; border:1px solid #DD865F !important; border-radius:6px !important; box-shadow:none !important; font-weight:800 !important; }.stButton>button:hover,[data-testid="stDownloadButton"] button:hover { background:var(--peach-hover) !important; border-color:#D97B62 !important; box-shadow:none !important; }
 .stTextInput input,.stTextArea textarea,[data-testid="stFileUploaderDropzone"] { background:var(--cream) !important; color:var(--espresso) !important; border:1px solid var(--border) !important; border-radius:8px !important; }.stTextInput input:focus,.stTextArea textarea:focus { border-color:var(--chestnut) !important; box-shadow:0 0 0 1px var(--chestnut) !important; }
 [data-testid="stDataFrame"] { background:var(--cream) !important; border:1px solid var(--border) !important; border-radius:8px !important; } [data-testid="stDataFrame"] * { color:var(--espresso) !important; } [data-testid="stExpander"] summary { color:var(--espresso) !important; } hr { border-color:var(--border) !important; }
 </style>
+<div class="soc-header"><div class="soc-icon">🛡</div><div class="soc-copy"><div class="soc-title">Phis-ShieldAI</div><div class="soc-subtitle">Threat Intelligence, Detection &amp; Response</div></div><div class="soc-tag">SECURITY OPERATIONS CENTER</div></div>
 """, unsafe_allow_html=True)
 
 # Global product theme.  Loaded last so it consistently overrides legacy
@@ -789,27 +764,47 @@ def _latest_signal_breakdown(history) -> tuple[int | None, list[tuple[str, int]]
         return None, []
     row = history.iloc[-1]
     try:
-        local = json.loads(row.get("Local Evidence")) if isinstance(row.get("Local Evidence"), str) else {}
-        providers = json.loads(row.get("Provider Evidence")) if isinstance(row.get("Provider Evidence"), str) else {}
+        raw_local = row.get("Local Evidence")
+        raw_prov = row.get("Provider Evidence")
+        local = json.loads(raw_local) if isinstance(raw_local, str) and raw_local else {}
+        providers = json.loads(raw_prov) if isinstance(raw_prov, str) and raw_prov else {}
+        if not isinstance(local, dict):
+            local = {}
+        if not isinstance(providers, dict):
+            providers = {}
     except (TypeError, ValueError):
         return None, []
+
     risk = int(row.get("Risk Score") or 0)
     signals: list[tuple[str, int]] = []
-    model = local.get("model", {}) if isinstance(local, dict) else {}
+
+    model = local.get("model")
     if isinstance(model, dict) and model.get("model_available") and model.get("prediction") == 1:
         signals.append(("Legacy ML telemetry", int(float(model.get("confidence") or 0))))
-    if isinstance(local.get("similarity"), (int, float)) and local["similarity"] >= 65:
-        signals.append(("Brand similarity", int(local["similarity"])))
-    tls = local.get("tls", {}) if isinstance(local, dict) else {}
+
+    sim = local.get("similarity")
+    if isinstance(sim, (int, float)) and sim >= 65:
+        signals.append(("Brand similarity", int(sim)))
+
+    tls = local.get("tls")
     if isinstance(tls, dict) and tls.get("https") and tls.get("connected") and not tls.get("certificate_valid"):
         signals.append(("TLS validation", 20))
-    whois = local.get("whois", {}) if isinstance(local, dict) else {}
+
+    whois = local.get("whois")
     if isinstance(whois, dict) and isinstance(whois.get("age_days"), (int, float)) and whois["age_days"] < 30:
         signals.append(("WHOIS domain age", 20))
-    vt = providers.get("virustotal", {}) if isinstance(providers, dict) else {}
-    detections = vt.get("evidence", {}).get("malicious", 0) if isinstance(vt, dict) else 0
-    if detections:
-        signals.append(("VirusTotal detections", min(100, int(detections) * 20)))
+
+    vt = providers.get("virustotal")
+    if isinstance(vt, dict):
+        ev = vt.get("evidence")
+        detections = 0
+        if isinstance(ev, dict):
+            detections = ev.get("malicious", 0) or ev.get("Malicious", 0)
+        if not detections and isinstance(vt.get("malicious_count"), (int, float)):
+            detections = vt["malicious_count"]
+        if detections:
+            signals.append(("VirusTotal detections", min(100, int(detections) * 20)))
+
     return risk, signals
 
 
@@ -832,7 +827,7 @@ def _chart_layout(fig, height: int = 300):
 def _feature_importance_figure():
     """Render only the bundled Random Forest's real feature_importances_."""
     from models.model_manager import load_model
-    artifact = load_model("url_detector")
+    artifact = load_model("url_live_25_detector")
     model = artifact.get("model") if isinstance(artifact, dict) else None
     names = artifact.get("feature_names", []) if isinstance(artifact, dict) else []
     values = getattr(model, "feature_importances_", None)

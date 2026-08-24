@@ -20,7 +20,7 @@ html, body, .stApp, [data-testid="stAppViewContainer"] {
   font-family: "IBM Plex Sans", "Inter", sans-serif !important;
 }
 
-.block-container { max-width: 1440px !important; padding-top: 20px !important; }
+.block-container { max-width: 1440px !important; padding-top: 4px !important; }
 #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stDeployButton"] { display: none !important; }
 [data-testid="stHeader"] { background: transparent !important; }
 [data-testid="stHeader"] button { color: var(--ps-ink) !important; }
@@ -152,7 +152,7 @@ section[data-testid="stSidebar"] [data-baseweb="radio"] > div:nth-child(7)::afte
   background: linear-gradient(135deg, #4a3728 0%, #3d2b1f 100%) !important;
   border: 1.5px solid #8f6559 !important;
   border-left: 6px solid #b28574 !important;
-  margin-top: 14px !important;
+  margin-top: 2px !important;
   margin-bottom: 16px !important;
   padding: 16px 24px !important;
   border-radius: 12px !important;
