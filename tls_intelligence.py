@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 
 @lru_cache(maxsize=256)
-def inspect_tls(url: str, timeout: float = 6.0) -> dict:
+def inspect_tls(url: str, timeout: float = 2.0) -> dict:
     """Return observed TLS evidence; an unavailable connection is never safe evidence."""
     target = url if "://" in url else f"https://{url}"
     parsed = urlparse(target)

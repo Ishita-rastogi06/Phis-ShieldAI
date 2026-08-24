@@ -57,7 +57,7 @@ def check_domain_age(url: str) -> dict:
     # ── Attempt 1: Standard HTTPS RDAP Lookup (Fast & Network-Resilient) ─────
     try:
         rdap_url = f"https://rdap.org/domain/{reg_domain}"
-        resp = requests.get(rdap_url, timeout=5, headers={"Accept": "application/rdap+json", "User-Agent": "Mozilla/5.0"})
+        resp = requests.get(rdap_url, timeout=1.8, headers={"Accept": "application/rdap+json", "User-Agent": "Mozilla/5.0"})
         if resp.status_code == 200:
             data = resp.json()
             events = {item.get("eventAction"): item.get("eventDate") for item in data.get("events", []) if isinstance(item, dict)}
@@ -116,9 +116,15 @@ def check_domain_age(url: str) -> dict:
     except Exception:
         pass
 
-    # ── Attempt 2: Native WHOIS Port 43 Socket Lookup ────────────────────────
+    # ── Attempt 2: Bounded WHOIS Port 43 Lookup ──────────────────────────────
+    from concurrent.futures import ThreadPoolExecutor
     try:
-        record = whois.whois(reg_domain)
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whois_port43")
+        future = executor.submit(whois.whois, reg_domain)
+        try:
+            record = future.result(timeout=1.2)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         creation, expiry, updated = _first(record.creation_date), _first(record.expiration_date), _first(record.updated_date)
         creation = _parse_dt(creation)
         expiry = _parse_dt(expiry)

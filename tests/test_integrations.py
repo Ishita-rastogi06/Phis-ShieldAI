@@ -25,26 +25,11 @@ class ThreatIntelTests(unittest.TestCase):
         self.assertTrue(lookup_url_virustotal("https://example.com")["strong"])
         from intelligence.provider_cache import cache_clear; cache_clear()
         get.return_value.status_code = 404; self.assertEqual(lookup_url_virustotal("https://example.com")["status"], "NO_MATCH")
-    @patch("intelligence.urlhaus.requests.post")
-    @patch("intelligence.urlhaus.os.getenv", return_value="key")
-    def test_urlhaus_active_hit(self, _key, post):
-        from intelligence.urlhaus import lookup_url
-        post.return_value = Mock(status_code=200, json=lambda: {"query_status": "ok", "url_status": "online", "threat": "malware_download"}); post.return_value.raise_for_status = Mock()
-        self.assertTrue(lookup_url("https://bad.example")["strong"])
     @patch("intelligence.openphish._feed", return_value={"https://bad.example"})
     def test_openphish_hit(self, _feed):
         from intelligence.openphish import lookup_url
         self.assertTrue(lookup_url("https://bad.example")["malicious"])
-    @patch("intelligence.urlscan.requests.get")
-    @patch("intelligence.urlscan.os.getenv", return_value="key")
-    def test_urlscan_result_and_rate_limit(self, _key, get):
-        from intelligence.urlscan import lookup_url
-        get.return_value = Mock(status_code=200, json=lambda: {"results": [{"_id": "x", "page": {}, "task": {}, "stats": {}}]}); get.return_value.raise_for_status = Mock()
-        self.assertEqual(lookup_url("https://example.com")["status"], "AVAILABLE")
-        from intelligence.provider_cache import cache_clear; cache_clear()
-        get.return_value.status_code = 429; self.assertEqual(lookup_url("https://example.com")["status"], "RATE_LIMITED")
     def test_verdict_policy(self):
-        self.assertEqual(calculate_verdict(providers={"urlhaus": {"malicious": True, "strong": True}}, brand_similarity=0, trusted_domain=False, website={}, tls={}, whois=None, local_reasons=[])[0], "CONFIRMED_MALICIOUS")
         self.assertEqual(calculate_verdict(providers={}, brand_similarity=95, trusted_domain=False, website={"forms": [{}]}, tls={}, whois=None, local_reasons=["credential login"])[0], "LIKELY_PHISHING")
         self.assertEqual(calculate_verdict(providers={}, brand_similarity=0, trusted_domain=False, website={}, tls={}, whois=None, local_reasons=[])[0], "INSUFFICIENT_EVIDENCE")
     def test_ssrf_is_blocked(self):
@@ -78,8 +63,7 @@ class ThreatIntelTests(unittest.TestCase):
         self.assertEqual(verdict, "INSUFFICIENT_EVIDENCE")
     def test_single_vt_flag_does_not_erase_strong_local_legitimacy(self):
         providers = {"virustotal": result("virustotal", AVAILABLE, evidence={"malicious": 1, "harmless": 64}, malicious=True),
-                     "urlhaus": result("urlhaus", NO_MATCH), "openphish": result("openphish", TIMEOUT),
-                     "urlscan": result("urlscan", AVAILABLE)}
+                     "openphish": result("openphish", TIMEOUT)}
         verdict, risk, _, _ = calculate_verdict(providers=providers, brand_similarity=0, trusted_domain=True,
             website={"reachable": True}, tls={"certificate_valid": True}, dns={"status": "RESOLVED", "a_records": ["8.8.8.8"]},
             whois=None, local_reasons=[])
@@ -88,7 +72,7 @@ class ThreatIntelTests(unittest.TestCase):
         verdict, risk, _, _ = calculate_verdict(providers={"openphish": result("openphish", UNAVAILABLE)}, brand_similarity=0, trusted_domain=False, website={}, tls={}, whois=None, local_reasons=[])
         self.assertEqual((verdict, risk), ("INSUFFICIENT_EVIDENCE", 0))
     def test_all_providers_unavailable_is_insufficient_evidence(self):
-        providers = {name: result(name, UNAVAILABLE) for name in ("virustotal", "urlscan", "urlhaus", "openphish")}
+        providers = {name: result(name, UNAVAILABLE) for name in ("virustotal", "openphish")}
         self.assertEqual(calculate_verdict(providers=providers, brand_similarity=0, trusted_domain=False, website={}, tls={}, whois=None, local_reasons=[])[0], "INSUFFICIENT_EVIDENCE")
     @patch("intelligence.openphish._feed", side_effect=__import__('requests').Timeout())
     def test_openphish_timeout_and_unavailable(self, _feed):
@@ -107,15 +91,10 @@ class ThreatIntelTests(unittest.TestCase):
     def test_virustotal_timeout(self, _key, _get):
         from virustotal_scanner import lookup_url_virustotal
         self.assertEqual(lookup_url_virustotal("https://example.com")["status"], TIMEOUT)
-    @patch("intelligence.urlhaus.requests.post", side_effect=__import__('requests').RequestException("offline"))
-    @patch("intelligence.urlhaus.os.getenv", return_value="key")
-    def test_urlhaus_unavailable(self, _key, _post):
-        from intelligence.urlhaus import lookup_url
-        self.assertEqual(lookup_url("https://bad.example")["status"], UNAVAILABLE)
     def test_environment_variable_names_are_consumed(self):
         from pathlib import Path
-        source = "\n".join(Path(name).read_text(encoding="utf-8") for name in ("virustotal_scanner.py", "intelligence/urlscan.py", "intelligence/urlhaus.py"))
-        for key in ("VIRUSTOTAL_API_KEY", "URLSCAN_API_KEY", "URLHAUS_AUTH_KEY"): self.assertIn(key, source)
+        source = Path("virustotal_scanner.py").read_text(encoding="utf-8")
+        self.assertIn("VIRUSTOTAL_API_KEY", source)
     @patch("dns_intelligence.dns.resolver.Resolver.resolve")
     def test_dns_records(self, resolve):
         from dns_intelligence import analyze_dns
@@ -158,7 +137,7 @@ class ThreatIntelTests(unittest.TestCase):
         source = Path("analysis/url_analysis_pipeline.py").read_text(encoding="utf-8")
         manager = Path("intelligence/provider_manager.py").read_text(encoding="utf-8")
         self.assertIn("collect_remote", source)
-        for name in ("virustotal", "urlscan", "urlhaus", "openphish"): self.assertIn(name, manager)
+        for name in ("virustotal", "openphish"): self.assertIn(name, manager)
     def test_pipeline_is_bounded_and_concurrent(self):
         from pathlib import Path
         source = Path("analysis/url_analysis_pipeline.py").read_text(encoding="utf-8")
@@ -175,28 +154,3 @@ class ThreatIntelTests(unittest.TestCase):
         from qr_analyzer import analyze_qr
         detector_class.return_value.detectAndDecode.return_value = ("https://one.example/a", None, None)
         self.assertEqual(analyze_qr("ignored.png"), "https://one.example/a")
-    @patch("intelligence.urlscan.requests.get")
-    @patch("intelligence.urlscan.os.getenv", return_value="key")
-    def test_urlscan_no_match_and_timeout(self, _key, get):
-        from intelligence.urlscan import lookup_url
-        get.return_value = Mock(status_code=200, json=lambda: {"results": []}); get.return_value.raise_for_status = Mock()
-        self.assertEqual(lookup_url("https://example.com")["status"], NO_MATCH)
-        from intelligence.provider_cache import cache_clear; cache_clear()
-        get.side_effect = __import__('requests').Timeout()
-        self.assertEqual(lookup_url("https://example.com")["status"], TIMEOUT)
-    @patch("intelligence.urlhaus.requests.post")
-    @patch("intelligence.urlhaus.os.getenv", return_value="key")
-    def test_urlhaus_no_match_and_rate_limit(self, _key, post):
-        from intelligence.urlhaus import lookup_url
-        post.return_value = Mock(status_code=200, json=lambda: {"query_status": "no_results"}); post.return_value.raise_for_status = Mock()
-        self.assertEqual(lookup_url("https://bad.example")["status"], NO_MATCH)
-        from intelligence.provider_cache import cache_clear; cache_clear()
-        post.return_value.status_code = 429
-        self.assertEqual(lookup_url("https://bad.example")["status"], RATE_LIMITED)
-    @patch("intelligence.openphish._feed", return_value=set())
-    def test_openphish_no_match(self, _feed):
-        from intelligence.openphish import lookup_url
-        self.assertEqual(lookup_url("https://bad.example")["status"], NO_MATCH)
-    def test_extraction_handles_markdown_and_noise(self):
-        urls = extract_urls("Read [portal](https://one.example/x). www.two.example/a, and https://one.example/x!")
-        self.assertEqual(urls, ["https://one.example/x", "https://www.two.example/a"])

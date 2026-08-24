@@ -129,106 +129,160 @@ def _page_features(response: requests.Response, domain: str) -> Dict[str, int]:
     }
 
 
-def extract_feature_mapping(url: str) -> Dict[str, int]:
-    """Collect all 30 UCI-encoded integer features for model inference."""
-    normalised = _normalise_url(url)
-    parsed = urlparse(normalised)
-    host = (parsed.hostname or "").lower()
-    if not host:
-        raise ValueError("URL has no hostname")
-    domain = _registrable_domain(host) or host
+LIVE_25_FEATURE_NAMES = [
+    "having_IP_Address", "URL_Length", "Shortining_Service", "having_At_Symbol",
+    "double_slash_redirecting", "Prefix_Suffix", "having_Sub_Domain", "SSLfinal_State",
+    "Domain_registeration_length", "Favicon", "port", "HTTPS_token", "Request_URL",
+    "URL_of_Anchor", "Links_in_tags", "SFH", "Submitting_to_email", "Abnormal_URL",
+    "Redirect", "on_mouseover", "RightClick", "popUpWidnow", "Iframe", "age_of_domain",
+    "DNSRecord"
+]
 
-    # 1. Lexical features (always extractable from URL string)
-    host_labels = host.split(".")
-    subdomain_count = max(len(host_labels) - (len(domain.split(".")) if domain else 1), 0)
-    url_length = len(normalised)
-    
-    # 2. DNS check
+
+def extract_live_feature_mapping(url: str) -> Dict[str, int]:
+    """Extract all 25 live-collectible integer features for real-time URL inference."""
+    raw_url = _normalise_url(url)
+    parsed = urlparse(raw_url)
+    host = (parsed.hostname or "").lower()
+    scheme = parsed.scheme.lower()
+
+    if not host:
+        raise FeatureUnavailableError(f"Cannot extract features: invalid hostname in '{url}'")
+
+    domain = _registrable_domain(host)
+
+    # 1. IP Address
+    having_ip = -1 if _host_is_ip(host) else 1
+
+    # 2. URL Length
+    url_len = len(raw_url)
+    length_feat = 1 if url_len < 54 else 0 if url_len <= 75 else -1
+
+    # 3. URL Shortener
+    short_feat = -1 if host in SHORTENER_HOSTS or any(h in host for h in ("tinyurl", "bit.ly", "goo.gl", "t.co")) else 1
+
+    # 4. Having '@' symbol
+    at_feat = -1 if "@" in raw_url else 1
+
+    # 5. Double slash redirect
+    double_slash_pos = raw_url.rfind("//")
+    double_slash_feat = -1 if double_slash_pos > 7 else 1
+
+    # 6. Prefix / Suffix (hyphen in domain)
+    prefix_suffix_feat = -1 if "-" in domain else 1
+
+    # 7. Subdomains count
+    sub_parts = host.split(".")
+    sub_count = max(0, len(sub_parts) - 2)
+    subdomain_feat = 1 if sub_count <= 1 else 0 if sub_count == 2 else -1
+
+    # 25. DNS Record
     try:
         socket.gethostbyname(host)
-        dns_record = 1
-    except socket.gaierror:
-        dns_record = -1
-
-    # 3. WHOIS check with fallback
-    creation, expiration, abnormal = None, None, False
-    try:
-        record, creation, expiration = _get_whois(domain)
-        now = datetime.now(timezone.utc)
-        creation = creation.replace(tzinfo=timezone.utc) if creation and creation.tzinfo is None else creation
-        expiration = expiration.replace(tzinfo=timezone.utc) if expiration and expiration.tzinfo is None else expiration
-        whois_domains = record.domain_name if isinstance(record.domain_name, list) else [record.domain_name]
-        abnormal = any(str(item).lower() == domain for item in whois_domains if item) is False
+        dns_feat = 1
     except Exception:
-        pass
+        dns_feat = -1
 
-    # 4. SSL State
-    ssl_state = _ssl_state(host, parsed.scheme)
+    # 8. SSL / TLS state
+    ssl_feat = _ssl_state(host, scheme) if dns_feat == 1 else -1
 
-    # 5. Page features with fallback if unreachable
-    page = {
-        "Favicon": 1, "Request_URL": 1, "URL_of_Anchor": 1, "Links_in_tags": 1,
-        "SFH": 1, "Submitting_to_email": 1, "Redirect": 0, "on_mouseover": 1,
-        "RightClick": 1, "popUpWidnow": 1, "Iframe": 1,
-    }
-    try:
-        response = requests.get(normalised, timeout=TIMEOUT_SECONDS, allow_redirects=True, headers={"User-Agent": "PhishShieldAI/1.0"})
-        if response.status_code == 200:
-            page = _page_features(response, domain)
-    except Exception:
-        # If webpage is unreachable, derive heuristic page features from URL path/keywords
-        if any(w in normalised.lower() for w in ("login", "verify", "secure", "update", "credential", "password")):
-            page["URL_of_Anchor"] = -1
-            page["SFH"] = -1
-
-    # 6. Legacy historical features (heuristically inferred for live prediction)
-    is_ip = _host_is_ip(host)
-    has_at = "@" in normalised
-    is_shortener = host in SHORTENER_HOSTS
-    has_hyphen = "-" in host
-    
+    # 9. Domain registration length & 24. Age of domain
+    _whois_data, c_dt, e_dt = _get_whois(domain)
     now = datetime.now(timezone.utc)
-    dom_reg_len = 1 if (expiration and (expiration - now).days > 365) else -1
-    dom_age = 1 if (creation and (now - creation).days >= 180) else -1
+    if c_dt:
+        age_days = (now - c_dt).days
+        domain_age_feat = 1 if age_days >= 180 else -1
+    else:
+        domain_age_feat = -1
 
-    # Heuristic approximations for historical telemetry
-    from brand_detector import _is_authoritative, detect_brand
-    trusted = _is_authoritative(host)
-    _, similarity = detect_brand(normalised)
+    if c_dt and e_dt:
+        reg_days = (e_dt - c_dt).days
+        domain_reg_feat = 1 if reg_days >= 365 else -1
+    else:
+        domain_reg_feat = -1
 
-    web_traffic = 1 if trusted else (-1 if (similarity >= 65 or is_ip or is_shortener) else 0)
-    page_rank = 1 if trusted else -1
-    google_index = 1 if (trusted or ssl_state == 1) else -1
-    links_pointing = 1 if trusted else 0
-    stat_report = -1 if (similarity >= 75 or is_ip or ("paypal" in host and not trusted)) else 1
+    # 11. Port
+    port_feat = -1 if parsed.port and parsed.port not in (80, 443) else 1
+
+    # 12. HTTPS token in host domain
+    https_token_feat = -1 if "https" in host.replace("https://", "") else 1
+
+    # 18. Abnormal URL (typosquatting / suspicious keywords / unresolvable host)
+    suspicious_kw = ("login", "verify", "update", "secure", "account", "banking", "paypa1", "amaz0n", "g00gle", "signin")
+    if dns_feat == -1 or prefix_suffix_feat == -1 or any(kw in raw_url.lower() for kw in suspicious_kw):
+        abnormal_feat = -1
+    else:
+        abnormal_feat = 1 if domain and domain in host else -1
+
+    # Fetch HTML response for DOM/page features if possible
+    if dns_feat == -1:
+        page_feats = {
+            "Favicon": -1, "Request_URL": -1, "URL_of_Anchor": -1, "Links_in_tags": -1,
+            "SFH": -1, "Submitting_to_email": -1, "Redirect": 0, "on_mouseover": 1,
+            "RightClick": 1, "popUpWidnow": 1, "Iframe": -1
+        }
+    else:
+        page_feats = {
+            "Favicon": 1, "Request_URL": 1, "URL_of_Anchor": 1, "Links_in_tags": 1,
+            "SFH": 1, "Submitting_to_email": 1, "Redirect": 1, "on_mouseover": 1,
+            "RightClick": 1, "popUpWidnow": 1, "Iframe": 1
+        }
+        try:
+            resp = requests.get(raw_url, timeout=3.0, headers={"User-Agent": "PhishShieldAI/1.0"})
+            if resp.ok:
+                page_feats = _page_features(resp, domain)
+        except Exception:
+            pass
 
     mapping = {
-        "having_IP_Address": -1 if is_ip else 1,
-        "URL_Length": 1 if url_length < 54 else (0 if url_length <= 75 else -1),
-        "Shortining_Service": -1 if is_shortener else 1,
-        "having_At_Symbol": -1 if has_at else 1,
-        "double_slash_redirecting": -1 if normalised.rfind("//") > 7 else 1,
-        "Prefix_Suffix": -1 if has_hyphen else 1,
-        "having_Sub_Domain": 1 if subdomain_count == 0 else (0 if subdomain_count == 1 else -1),
-        "SSLfinal_State": ssl_state,
-        "Domain_registeration_length": dom_reg_len,
-        "port": -1 if parsed.port is not None else 1,
-        "HTTPS_token": -1 if "https" in host else 1,
-        "Abnormal_URL": -1 if abnormal else 1,
-        "age_of_domain": dom_age,
-        "DNSRecord": dns_record,
-        "web_traffic": web_traffic,
-        "Page_Rank": page_rank,
-        "Google_Index": google_index,
-        "Links_pointing_to_page": links_pointing,
-        "Statistical_report": stat_report,
+        "having_IP_Address": having_ip,
+        "URL_Length": length_feat,
+        "Shortining_Service": short_feat,
+        "having_At_Symbol": at_feat,
+        "double_slash_redirecting": double_slash_feat,
+        "Prefix_Suffix": prefix_suffix_feat,
+        "having_Sub_Domain": subdomain_feat,
+        "SSLfinal_State": ssl_feat,
+        "Domain_registeration_length": domain_reg_feat,
+        "Favicon": page_feats.get("Favicon", 1),
+        "port": port_feat,
+        "HTTPS_token": https_token_feat,
+        "Request_URL": page_feats.get("Request_URL", 1),
+        "URL_of_Anchor": page_feats.get("URL_of_Anchor", 1),
+        "Links_in_tags": page_feats.get("Links_in_tags", 1),
+        "SFH": page_feats.get("SFH", 1),
+        "Submitting_to_email": page_feats.get("Submitting_to_email", 1),
+        "Abnormal_URL": abnormal_feat,
+        "Redirect": page_feats.get("Redirect", 1),
+        "on_mouseover": page_feats.get("on_mouseover", 1),
+        "RightClick": page_feats.get("RightClick", 1),
+        "popUpWidnow": page_feats.get("popUpWidnow", 1),
+        "Iframe": page_feats.get("Iframe", 1),
+        "age_of_domain": domain_age_feat,
+        "DNSRecord": dns_feat,
     }
-    mapping.update(page)
     return mapping
 
 
+def extract_live_features(url: str) -> List[int]:
+    """Return ordered 25-integer feature vector for live model inference."""
+    mapping = extract_live_feature_mapping(url)
+    return [mapping[name] for name in LIVE_25_FEATURE_NAMES]
+
+
+def extract_feature_mapping(url: str) -> Dict[str, int]:
+    """Legacy 30-feature extraction call — raises FeatureUnavailableError."""
+    raise FeatureUnavailableError(
+        "Historical features web_traffic, Page_Rank, Google_Index, "
+        "Links_pointing_to_page, and Statistical_report cannot be collected "
+        "faithfully for arbitrary URLs."
+    )
+
+
 def extract_features(url: str) -> List[int]:
-    mapping = extract_feature_mapping(url)
-    values = [mapping[name] for name in URL_FEATURE_NAMES]
-    if len(values) != 30 or not all(isinstance(value, int) for value in values): raise FeatureUnavailableError("Feature schema must contain 30 integers.")
-    return values
+    """Legacy 30-feature extraction call — raises FeatureUnavailableError."""
+    raise FeatureUnavailableError(
+        "Historical features web_traffic, Page_Rank, Google_Index, "
+        "Links_pointing_to_page, and Statistical_report cannot be collected "
+        "faithfully for arbitrary URLs."
+    )

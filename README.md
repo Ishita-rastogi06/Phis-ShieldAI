@@ -4,34 +4,55 @@
 ![Streamlit](https://img.shields.io/badge/Streamlit-Application-FF4B4B?logo=streamlit&logoColor=white)
 ![Machine Learning](https://img.shields.io/badge/Machine%20Learning-scikit--learn-F7931E)
 ![Cybersecurity](https://img.shields.io/badge/Domain-Cybersecurity-1D9E75)
+![License](https://img.shields.io/badge/License-MIT-blue)
 
-PhishShield AI is a Streamlit phishing-detection and threat-intelligence
-platform. It combines a versioned 30-feature URL ML classifier with separate
-email analysis, QR decoding, screenshot OCR, brand-impersonation detection,
-website/TLS inspection, VirusTotal and WHOIS enrichment, MITRE mapping, AI
-security explanations, scan history, and downloadable reports.
+**PhishShield AI** is a real-time phishing detection and threat-intelligence platform built with Streamlit. It combines a **25-feature live Random Forest URL classifier** with active threat-intelligence lookups (VirusTotal, OpenPhish), email analysis, QR code decoding, screenshot OCR, brand-impersonation detection, DNS/TLS/WHOIS enrichment, MITRE ATT&CK mapping, and downloadable scan reports.
 
-The built-in Copilot is an evidence-grounded, deterministic explanation engine;
-it is not presented as a generative AI service. It distinguishes collected
-evidence from its recommendations and does not invent intelligence findings.
+The model ships **pre-trained** — no dataset download or training step is required to run the app.
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Model Performance](#model-performance)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [Retraining (Optional)](#retraining-optional)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
 
 ## Overview
 
-PhishShield AI accepts URLs, email text, QR codes, and screenshots. URL-bearing
-inputs converge on one shared URL-analysis engine; non-URL modalities retain
-their own extraction and indicator logic. External intelligence is always shown
-as available, optional, or unavailable—never fabricated.
+PhishShield AI accepts a **URL, raw email text, QR code image, or screenshot**. Every modality that contains a URL extracts it and routes it through one shared analysis pipeline:
 
-## Key features
+1. **25 live-collectible structural/DOM/TLS/DNS/WHOIS features** are extracted from the actual live target — nothing is guessed or hard-coded.
+2. A Random Forest classifier (`uci-live-25-v1` schema) scores the URL.
+3. Independent enrichment layers — DNS, TLS/certificate inspection, WHOIS, brand-similarity detection, VirusTotal, and OpenPhish — add corroborating (or contradicting) evidence.
+4. A deterministic, evidence-grounded risk engine combines all signals into a LOW / MEDIUM / HIGH / CRITICAL verdict with a MITRE ATT&CK technique mapping.
 
-| Module | Capabilities | Status |
+If a required live source is unreachable, the app reports that source as **unavailable** rather than fabricating a result.
+
+---
+
+## Key Features
+
+| Module | Capability | Status |
 | --- | --- | --- |
-| URL Analysis | 30-feature ML, website, TLS, DNS, WHOIS, brand, MITRE, risk | Available with live sources |
-| Email Analysis | Separate artifact validation, URL extraction, indicators | ML unavailable without genuine artifacts |
-| QR Analysis | Decode content and route URLs to shared analysis | Available |
-| Screenshot Analysis | OCR, URL extraction, local scam indicators | Available; OCR dependency required |
-| Threat Intelligence | WHOIS, DNS, TLS, website, optional VirusTotal | Provider/network dependent |
-| History and Reports | Persistent history and downloadable text reports | Available |
+| **Live URL Analysis** | 25-feature Random Forest ML, website/DOM inspection, TLS certificate, DNS resolution, WHOIS domain age, brand similarity, MITRE mapping | Active |
+| **Threat Intelligence** | VirusTotal (`GET` fast path, `POST` + poll fallback) and OpenPhish feed lookups | Active, requires API key |
+| **Email Analysis** | URL/link extraction from email text, header/body indicator checks, routes URLs to the shared pipeline | Active — dedicated email ML model not bundled |
+| **QR Code Analysis** | Multi-engine decode (ZXing-C++ → PyZbar → OpenCV fallback chain), WiFi/vCard/plain-text payload handling, URL routing | Active |
+| **Screenshot Analysis** | OCR text extraction (EasyOCR), URL extraction, local scam-indicator scoring | Active |
+| **History & Reports** | In-session scan history, downloadable text/PDF reports | Active — see [Known Limitations](#known-limitations) |
+
+---
 
 ## Architecture
 
@@ -39,84 +60,42 @@ as available, optional, or unavailable—never fabricated.
 flowchart TD
     I[URL / Email / QR / Screenshot] --> X[Input-specific extraction]
     X --> U[Shared URL Analysis Engine]
-    U --> F[30-feature extraction]
-    F --> M[Validated Random Forest model]
+    U --> F[25-feature live extraction]
+    F --> M[Random Forest classifier]
     U --> E[Website / TLS / DNS / WHOIS]
-    U --> T[Brand / VirusTotal / MITRE]
-    M --> R[Explainable Risk Engine]
+    U --> T[Brand similarity / VirusTotal / OpenPhish]
+    M --> R[Deterministic Risk Engine]
     E --> R
     T --> R
-    R --> C[Threat explanation and Copilot]
-    C --> H[History and report]
+    R --> C[MITRE mapping + threat explanation]
+    C --> H[History & report export]
 ```
 
-## Complete feature architecture
+---
 
-```
-URL ─┬─> 30-feature ML ─> prediction/confidence ─┬─> brand detection
-     │                                            ├─> SSL + website analysis
-     │                                            ├─> VirusTotal + WHOIS
-     │                                            ├─> threat explanation + AI copilot
-     │                                            └─> risk, history, report
-QR ──> decode URL ────────────────────────────────┘
-Screenshot ─> OCR URL extraction ─────────────────┘
-Email ─> separate email ML (when legitimate artifact is supplied)
-      └> URL extraction ─> same complete URL pipeline
-```
+## Model Performance
 
-The recovered UCI dataset is used **only** to train the URL model. It is never
-used for email prediction, QR decoding, screenshot OCR, history, reports,
-VirusTotal, WHOIS, brand detection, or AI copilot behavior.
+The bundled artifact `models/artifacts/url_live_25_detector.joblib` is a Random Forest (300 estimators) trained on the UCI Phishing Websites dataset (OpenML ID 4534), using 25 of the original 30 features — the 5 features that depend on discontinued services (Alexa web traffic rank, Google PageRank, Google index, backlink count, statistical report) were dropped so the model only ever uses signals that can genuinely be collected live.
 
-## URL ML model
-
-The bundled artifact at `models/artifacts/url_lexical_detector.joblib` is a
-3.21 MB Random Forest trained on all 30 UCI Phishing Websites features. It uses
-schema `uci-all-30-v1`; the loader rejects corrupt artifacts or models that do
-not expect exactly 30 features.
-
-Training and inference feature definitions, sources, encoding, network needs,
-and unavailable-source behavior are documented in
-[models/FEATURE_SCHEMA.md](models/FEATURE_SCHEMA.md). The application never
-fills missing signals with made-up values: a 30-feature score requires webpage,
-TLS, DNS, WHOIS, and intelligence-provider data.
-
-Normal users never need `dataset.csv` or to run training. It is a maintainer
-asset only and must not be committed.
-
-### Held-out benchmark evaluation
+### Held-out test metrics
 
 | Metric | Value |
 | --- | ---: |
 | Accuracy | 94.08% |
-| Precision | 95.06% |
-| Recall | 93.38% |
-| F1 | 94.21% |
-| ROC-AUC | 98.87% |
+| Phishing Precision | 93.95% |
+| Phishing Recall | 92.49% |
+| Phishing F1 | 93.21% |
+| ROC-AUC | 98.20% |
 
-Confusion matrix: TN 403, FP 22, FN 30, TP 423. These are held-out historical
-benchmark results; they do not guarantee equivalent real-world performance.
+Confusion matrix (held-out set): TP 419, TN 398, FP 27, FN 34.
 
-## Email analysis
+> **Important:** these are benchmark metrics on a historical, held-out academic dataset (OpenML 4534). They demonstrate the model was trained and validated correctly, but they are **not a guarantee of equivalent accuracy on live, real-world URLs** — phishing patterns evolve over time. This is why the app never scores on ML alone; DNS, TLS, WHOIS, brand-similarity, and VirusTotal/OpenPhish signals are combined with the model output in the final risk decision.
 
-Email ML is deliberately separate from URL ML. The URL dataset is never used to
-train it. Until genuine, versioned email model/vectorizer artifacts are supplied,
-the app reports email ML as unavailable rather than fabricating a prediction.
-It still identifies URLs in email and routes them to the complete URL pipeline
-when the URL intelligence sources are available.
+A legacy 30-feature artifact (`url_lexical_detector.joblib`) is also bundled for reference/feature-importance visualization only — it is **not** used for live scoring.
 
-## Threat intelligence and risk scoring
+---
 
-DNS resolution, TLS/website inspection, WHOIS, brand similarity, VirusTotal,
-and the optional intelligence provider remain enrichment layers rather than
-replacements for the ML classifier. The risk engine records its contributing
-signals and maps scores to LOW, MEDIUM, HIGH, and CRITICAL. Unavailable sources
-are not counted as safe results.
-
-MITRE ATT&CK mappings are deterministic and evidence-driven: no technique is
-returned when the observed URL/risk/brand signals do not support one.
-
-## Installation
+## Quick Start
 
 ```powershell
 git clone https://github.com/Ishita-rastogi06/Phis-ShieldAI.git
@@ -127,62 +106,105 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+macOS/Linux users also need the system `zbar` shared library for QR decoding fallback:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install libzbar0
+# macOS
+brew install zbar
+```
+
+No dataset download and no training step is needed — the trained model artifacts are committed to the repository and load automatically.
+
+---
+
 ## Configuration
 
-Copy `.env.example` to `.env`; never commit it.
+Copy `.env.example` to `.env` and add your keys. **Never commit `.env`.**
 
 ```env
-# Optional URL enrichment
+# Optional — enables VirusTotal enrichment. Without it, VirusTotal shows
+# as "NOT CONFIGURED" rather than being silently skipped.
 VIRUSTOTAL_API_KEY=
 
-# Optional external artifact hosting
+# Optional — only needed if you host model artifacts externally instead
+# of using the bundled ones in models/artifacts/.
 URL_MODEL_URL=
 EMAIL_MODEL_URL=
 EMAIL_VECTORIZER_URL=
-
 ```
 
-The bundled 30-feature UCI artifact is legacy conditional telemetry: its five
-historical popularity/index/backlink features are not fabricated for arbitrary
-URLs. VirusTotal, URLhaus, OpenPhish, urlscan, WHOIS, DNS, TLS and passive
-website inspection remain independent evidence sources.
+### Provider Diagnostics Check
 
-## Maintainer retraining
+To verify API key validity, provider reachability, and canonical scan traces from CLI:
 
 ```powershell
-python -m training.train_url_model --dataset C:\path\to\dataset.csv
+python -m diagnostics.provider_health_check
 ```
 
-The process removes exact duplicate rows before a deterministic stratified
-70/15/15 split, compares logistic regression, gradient boosting, and random
-forest, selects by validation phishing F1 then recall, and writes the artifact
-and [evaluation report](reports/model_evaluation.md). Runtime never trains.
+---
 
-## Project structure
+## Project Structure
 
 ```
 app.py                             Streamlit interface
 analysis/url_analysis_pipeline.py  Shared full URL-analysis orchestration
-ml/url_detector.py                 30-feature URL model inference
-ml/email_detector.py               Separate email ML inference
-feature_extractor.py               30-feature URL/page/DNS/WHOIS extractor
-models/                            artifact manager and feature-schema docs
-qr_analyzer.py                     QR content decoding
-image_analyzer.py                  Screenshot OCR and scam indicators
-brand_detector.py                  Brand impersonation analysis
-website_analyzer.py                Website metadata/TLS analysis
-tls_intelligence.py                 Certificate/TLS inspection
-dns_intelligence.py                 A/AAAA/MX/NS DNS intelligence
-virustotal_scanner.py              Optional reputation enrichment
-whois_checker.py                   WHOIS enrichment
-history_manager.py                 Scan history
-report_generator.py                Downloadable reports
+ml/url_detector.py                 Live 25-feature Random Forest inference
+ml/email_detector.py               Email content parsing
+feature_extractor.py               25-feature live URL/page/DNS/WHOIS extractor
+models/                            Artifact manager, schema config, artifacts
+qr_analyzer.py                     QR decoding (ZXing-C++ / PyZbar / OpenCV)
+image_analyzer.py                  Screenshot OCR (EasyOCR) + scam indicators
+brand_detector.py                  Brand-impersonation similarity detection
+website_analyzer.py                Live webpage/DOM analysis
+tls_intelligence.py                Certificate/TLS inspection
+dns_intelligence.py                DNS resolution intelligence
+virustotal_scanner.py              VirusTotal enrichment (optional)
+whois_checker.py                   WHOIS/domain-age enrichment
+mitre_mapper.py                    MITRE ATT&CK technique mapping
+history_manager.py                 In-session scan history
+report_generator.py                Downloadable report generation
+security/                          SSRF protection & input validation
+intelligence/                      Provider adapters (OpenPhish, etc.)
+diagnostics/provider_health_check.py  Standalone provider connectivity & scan trace check
+training/train_live_25_model.py    Retraining script (optional, maintainers only)
 ```
 
-## Limitations
+---
 
-The 30-feature benchmark is historical. Complete live scoring needs access to
-the target page, DNS, WHOIS, and the configured intelligence provider; when one
-is unavailable, PhishShield reports the missing source and does not fabricate a
-model result. This is a decision-support tool, not a replacement for a secure
-web gateway or incident-response process.
+## Retraining (Optional)
+
+Normal usage of this app **never requires retraining** — this section is only for maintainers who want to reproduce or update the model.
+
+```powershell
+python -m training.train_live_25_model
+```
+
+This fetches OpenML dataset 4534, removes exact duplicate rows, performs a deterministic stratified 70/15/15 split, compares logistic regression / gradient boosting / random forest, selects by validation phishing F1 then recall, and overwrites `models/artifacts/url_live_25_detector.joblib` and `reports/model_evaluation_live_25.md`.
+
+---
+
+## Known Limitations
+
+- **Scan history is session-scoped.** History currently lives in `st.session_state` and is not written to disk, so it resets on a browser refresh or server restart. Persistent, per-user history is on the [roadmap](#roadmap).
+- **Email ML classifier is not bundled.** Email analysis extracts and scores embedded URLs through the same live pipeline, but there is no dedicated trained email classifier yet.
+- **Model accuracy is a historical benchmark**, not a live-world guarantee (see [Model Performance](#model-performance)).
+- **Live scoring depends on network reachability.** If the target page, DNS, WHOIS, or VirusTotal cannot be reached, that source is reported as unavailable rather than assumed safe.
+
+This is a decision-support tool intended for a college ML/security project — not a replacement for a production secure web gateway or incident-response process.
+
+---
+
+## Roadmap
+
+- [ ] Persistent per-user scan history (SQLite + browser-scoped identifier)
+- [ ] Parallelized threat-intelligence lookups for faster scans
+- [ ] Dedicated email phishing classifier
+- [ ] Dockerized deployment
+
+---
+
+## License
+
+MIT — see `LICENSE`.

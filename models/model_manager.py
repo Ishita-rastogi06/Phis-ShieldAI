@@ -33,14 +33,15 @@ def _sha256(path: Path) -> str:
 
 
 def _validate_artifact(model_key: str, artifact: Any) -> bool:
-    if model_key == "url_detector":
+    if model_key in ("url_detector", "url_live_25_detector"):
         config = MODEL_REGISTRY[model_key]
+        expected_cnt = 25 if model_key == "url_live_25_detector" else 30
         return (
             isinstance(artifact, dict)
             and artifact.get("schema_version") == config["schema_version"]
             and artifact.get("feature_names") == config["feature_names"]
-            and artifact.get("metadata", {}).get("expected_feature_count") == 30
-            and getattr(artifact.get("model"), "n_features_in_", None) == 30
+            and artifact.get("metadata", {}).get("expected_feature_count") == expected_cnt
+            and getattr(artifact.get("model"), "n_features_in_", None) == expected_cnt
             and hasattr(artifact.get("model"), "predict")
             and hasattr(artifact.get("model"), "predict_proba")
         )

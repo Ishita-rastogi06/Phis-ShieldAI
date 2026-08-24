@@ -46,6 +46,7 @@ secrets.toml
 *.pth
 models/artifacts/*.joblib
 !models/artifacts/url_lexical_detector.joblib
+!models/artifacts/url_live_25_detector.joblib
 
 # Large datasets — commit only small sample files
 phishing_dataset.csv

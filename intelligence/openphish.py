@@ -44,13 +44,56 @@ def _feed(timeout: float) -> set[str]:
 
 
 def lookup_url(url: str, timeout: float = 6.0) -> dict:
+    import re
+    from urllib.parse import urlparse
+    from brand_detector import _is_authoritative, detect_brand, has_explicit_phish_indicator
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0] or url
+
+    is_ip = bool(re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", host) or ":" in host)
+    path_lower = (parsed.path or "").lower()
+    has_login_path = any(p in path_lower for p in ["login", "wp-login", "verify", "signin", "admin", "account", "update", "confirm"])
+
+    is_explicit, p_token = has_explicit_phish_indicator(url)
+    is_legit = _is_authoritative(host)
+    brand_name, sim = detect_brand(url)
+    is_suspicious = (sim >= 70) or is_explicit
+
     try:
         urls = _feed(timeout)
+        feed_size = len(urls)
+        
+        # 1. Exact URL match in OpenPhish live feed
         if url in urls:
-            return result("openphish", AVAILABLE, evidence={"feed": "community", "matched_url": url}, malicious=True,
-                          strong=True, reason="Exact OpenPhish community-feed match")
-        return result("openphish", NO_MATCH, reason="No exact OpenPhish community-feed match")
+            return result("openphish", AVAILABLE, evidence={"Feed Type": "Live Phishing Feed", "Queried Target": url, "Active Feed Indicators": f"{feed_size:,}"}, malicious=True,
+                          strong=True, reason=f"CRITICAL: Exact URL match for '{url}' found in OpenPhish active threat feed!")
+        
+        # 2. Host match in OpenPhish live feed
+        domain_matches = [u for u in urls if host and len(host) > 4 and host in u]
+        if domain_matches:
+            return result("openphish", AVAILABLE, evidence={"Feed Type": "Live Phishing Feed", "Queried Target": url, "Matched Threat Record": domain_matches[0], "Active Feed Indicators": f"{feed_size:,}"}, malicious=True,
+                          strong=True, reason=f"WARNING: Host '{host}' matches active phishing URL record '{domain_matches[0]}' in OpenPhish feed!")
+
+        if is_legit:
+            return result("openphish", NO_MATCH, evidence={"Feed Type": "Live Phishing Feed", "Queried Target": url, "Active Feed Indicators": f"{feed_size:,}", "is_legit": True},
+                          reason=f"URL '{url}' belongs to a verified trusted brand domain ({host}). Confirmed clean.")
+
+        if is_ip or (is_ip and has_login_path):
+            return result("openphish", NO_MATCH, evidence={"Feed Type": "Live Phishing Feed", "Queried Target": url, "Active Feed Indicators": f"{feed_size:,}", "is_suspicious_ip": True},
+                          reason=f"UNINDEXED THREAT: Target host is a raw IP address '{host}' with path '{parsed.path}'. 0 matches in OpenPhish feed (IP-based phishing links are unlisted until reported).")
+
+        if is_explicit:
+            return result("openphish", NO_MATCH, evidence={"Feed Type": "Live Phishing Feed", "Queried Target": url, "Active Feed Indicators": f"{feed_size:,}", "is_suspicious_brand": True},
+                          reason=f"UNINDEXED THREAT: Target domain '{host}' contains explicit phishing indicator '{p_token}'. 0 matches in OpenPhish feed (unlisted until reported).")
+
+        if is_suspicious:
+            return result("openphish", NO_MATCH, evidence={"Feed Type": "Live Phishing Feed", "Queried Target": url, "Active Feed Indicators": f"{feed_size:,}", "is_suspicious_brand": True},
+                          reason=f"UNLISTED IN FEED: '{host}' exhibits brand impersonation targeting {brand_name.title()}. 0 matches in OpenPhish feed (newly generated links are unlisted until reported).")
+
+        # 3. Clean / No Match in OpenPhish Feed
+        return result("openphish", NO_MATCH, evidence={"Feed Type": "Live Phishing Feed", "Queried Target": url, "Active Feed Indicators": f"{feed_size:,}"},
+                      reason=f"URL '{url}' verified against OpenPhish live feed ({feed_size:,} active threat records) — 0 exact matches found for '{host}'.")
     except requests.Timeout:
-        return result("openphish", TIMEOUT, reason="OpenPhish feed request timed out")
+        return result("openphish", TIMEOUT, evidence={"Queried Target": url}, reason=f"OpenPhish feed request timed out while verifying '{host}'.")
     except (requests.RequestException, ValueError) as error:
-        return result("openphish", UNAVAILABLE, reason=str(error))
+        return result("openphish", UNAVAILABLE, evidence={"Queried Target": url}, reason=f"OpenPhish provider unavailable for '{host}': {error}")

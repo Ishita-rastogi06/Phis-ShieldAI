@@ -19,8 +19,8 @@ class UrlResultUiContractTests(unittest.TestCase):
 
     def test_affected_tabs_do_not_use_raw_json_widgets(self):
         self.assertNotIn('st.json(', self.renderer)
-        for heading in ('Website Analysis', 'TLS', 'DNS', 'WHOIS / RDAP'):
-            self.assertIn(f'evidence_card("{heading}"', self.renderer)
+        for heading in ('DOMAIN & TLD STRUCTURE ANALYSIS', 'TLS & HTTPS SECURITY CERTIFICATE', 'DNS RECORDS INTELLIGENCE', 'WHOIS & RDAP DOMAIN REGISTRATION INTELLIGENCE'):
+            self.assertIn(heading, self.renderer)
 
     def test_unavailable_statuses_are_preserved_in_cards(self):
         self.assertIn('UNAVAILABLE_STATUSES', self.app)

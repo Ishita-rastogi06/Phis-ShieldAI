@@ -9,18 +9,33 @@ from security.tldextract_config import offline_extractor
 
 _EXTRACT = offline_extractor()
 BRAND_DOMAINS = {
-    "amazon": {"amazon.com", "amazon.in", "amazonaws.com"}, "google": {"google.com", "gmail.com"},
-    "microsoft": {"microsoft.com", "live.com", "office.com"}, "apple": {"apple.com", "icloud.com"},
+    "amazon": {"amazon.com", "amazon.in", "amazonaws.com", "amazon"}, "google": {"google.com", "gmail.com", "google"},
+    "microsoft": {"microsoft.com", "live.com", "office.com", "microsoft"}, "apple": {"apple.com", "icloud.com", "apple"},
     "paypal": {"paypal.com"}, "netflix": {"netflix.com"}, "github": {"github.com"},
     "facebook": {"facebook.com", "instagram.com", "meta.com"}, "stripe": {"stripe.com"},
     "linkedin": {"linkedin.com"}, "sbi": {"sbi.co.in"}, "hdfc": {"hdfcbank.com"},
-    "wikipedia": {"wikipedia.org"},
+    "wikipedia": {"wikipedia.org"}, "usps": {"usps.com", "usps.gov"},
+    "fedex": {"fedex.com"}, "dhl": {"dhl.com"}, "ups": {"ups.com"},
+    "chase": {"chase.com"}, "bankofamerica": {"bankofamerica.com"},
+    "wellsfargo": {"wellsfargo.com"}, "coinbase": {"coinbase.com"},
+    "binance": {"binance.com"}, "telegram": {"telegram.org", "t.me"},
+    "whatsapp": {"whatsapp.com"}, "instagram": {"instagram.com"},
 }
 AUTHORITATIVE_DOMAINS = {domain for domains in BRAND_DOMAINS.values() for domain in domains} | {
     "stackoverflow.com", "stackexchange.com", "reddit.com", "bbc.com", "bbc.co.uk",
-    "reuters.com", "cloudflare.com", "pypi.org", "npmjs.com", "example.com",
+    "reuters.com", "cloudflare.com", "pypi.org", "npmjs.com", "example.com", "me-qr.com",
 }
 GENERIC_TOKENS = {"login", "secure", "account", "verify", "update", "support", "mail", "cloud", "service", "official", "signin", "sign", "www", "auth", "portal", "online"}
+EXPLICIT_PHISH_KEYWORDS = {"fake", "phish", "scam", "spoof", "malware", "evil", "steal", "hack", "trap", "test-phish", "invoice-portal"}
+
+
+def has_explicit_phish_indicator(url: str) -> tuple[bool, str]:
+    host = _host(url)
+    tokens = re.split(r"[^a-z0-9]+", host)
+    for t in tokens:
+        if t in EXPLICIT_PHISH_KEYWORDS:
+            return True, t
+    return False, ""
 
 
 def _host(url: str) -> str:
@@ -34,8 +49,11 @@ def _registrable_domain(host: str) -> str:
 
 def _is_authoritative(netloc: str) -> bool:
     host = _host(netloc)
+    parts = _EXTRACT(host)
     domain = _registrable_domain(host)
-    return any(domain == known or domain.endswith("." + known) for known in AUTHORITATIVE_DOMAINS)
+    if parts.suffix in BRAND_DOMAINS or parts.suffix in AUTHORITATIVE_DOMAINS or host == parts.suffix:
+        return True
+    return any(domain == known or domain.endswith("." + known) or host == known or host.endswith("." + known) for known in AUTHORITATIVE_DOMAINS)
 
 
 def _tokens(host: str) -> set[str]:

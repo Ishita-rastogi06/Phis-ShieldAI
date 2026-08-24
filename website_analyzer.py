@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from security.url_security import UnsafeURLError, normalise_url, validate_redirect
 
 MAX_RESPONSE_BYTES = 1_500_000
-TIMEOUT_SECONDS = 6
+TIMEOUT_SECONDS = (1.0, 1.2)
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -44,10 +44,10 @@ def analyze_website(url: str) -> dict:
     target = normalise_url(url)
     session = _get_session()
     try:
-        # Validate every hop ourselves: requests' automatic redirects can otherwise cross into an internal target.
+        # Validate every hop: limit to max 3 hops for high-speed performance
         response = None
         chain = []
-        for _ in range(6):
+        for _ in range(3):
             try:
                 response = requests.get(target, timeout=TIMEOUT_SECONDS, allow_redirects=False, stream=True, headers=HEADERS)
             except requests.exceptions.SSLError:

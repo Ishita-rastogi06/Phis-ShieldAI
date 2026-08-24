@@ -1,14 +1,19 @@
 import easyocr
 import re
+import streamlit as st
+import torch
 from security.url_extraction import extract_urls
 
-_easyocr_reader = None
+# Optimize PyTorch CPU thread allocation for fast OCR inference
+try:
+    torch.set_num_threads(4)
+except Exception:
+    pass
 
+
+@st.cache_resource
 def _get_reader():
-    global _easyocr_reader
-    if _easyocr_reader is None:
-        _easyocr_reader = easyocr.Reader(['en'], gpu=False)
-    return _easyocr_reader
+    return easyocr.Reader(['en'], gpu=False, verbose=False)
 
 # ── HIGH-SIGNAL keywords ─────────────────────────────────────────────────────
 HIGH_RISK_KEYWORDS = [

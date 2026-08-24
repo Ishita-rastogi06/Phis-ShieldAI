@@ -10,16 +10,11 @@ def calculate_verdict(*, providers: dict, brand_similarity: int, trusted_domain:
     malicious = [item for item in providers.values() if item.get("malicious")]
     strong = [item for item in malicious if item.get("strong")]
     vt = providers.get("virustotal", {}).get("evidence", {})
-    if providers.get("urlhaus", {}).get("strong"):
-        reasons.append("Rule: active URLhaus malware-distribution record")
     if providers.get("openphish", {}).get("strong"):
         reasons.append("Rule: exact OpenPhish phishing-feed match")
     if vt.get("malicious", 0) >= 3:
         reasons.append("Rule: strong VirusTotal malicious-detection consensus")
-    # An active URLhaus record and a strong VT consensus are independently
-    # sufficient.  A phishing-feed hit is valuable, but is deliberately not
-    # promoted to "confirmed" unless another independent source corroborates it.
-    if providers.get("urlhaus", {}).get("strong") or vt.get("malicious", 0) >= 3 or len(malicious) >= 2:
+    if vt.get("malicious", 0) >= 3 or len(malicious) >= 2:
         return "CONFIRMED_MALICIOUS", min(100, 85 + 5 * len(strong)), "strong", reasons
     credential_page = bool(website.get("forms")) and any("credential" in x.lower() or "login" in x.lower() or "password" in x.lower() for x in local_reasons)
     if brand_similarity >= 85 and credential_page:

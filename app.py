@@ -1,7 +1,12 @@
 
+import socket
+socket.setdefaulttimeout(2.0)
+
 import tempfile
 import json
+import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 import html
 
 import plotly.graph_objects as go
@@ -41,7 +46,7 @@ from history_manager import (
     clear_history
 )
 
-from report_generator import generate_report, generate_input_report, generate_canonical_report
+from report_generator import generate_report, generate_input_report, generate_canonical_report, generate_pdf_report
 
 
 # =====================================================
@@ -79,11 +84,7 @@ hr { border-color:var(--line) !important; } .stCaption { color:var(--muted) !imp
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Phis-ShieldAI")
 
-st.subheader(
-    "AI-Powered Phishing Detection & Threat Intelligence Platform"
-)
 
 
 st.markdown("""
@@ -151,8 +152,9 @@ UNAVAILABLE_STATUSES = {"UNAVAILABLE", "NOT_CONFIGURED", "TIMEOUT", "RATE_LIMITE
 #   UNAVAILABLE  — call was attempted but provider returned an error / auth rejection
 #   NO_MATCH     — call succeeded; provider simply has no record for this target
 _STATE_LABELS = {
-    "NOT_CONFIGURED": ("NOT QUERIED", "Provider key not configured — call was never sent."),
-    "UNAVAILABLE":    ("UNAVAILABLE", "Provider call attempted but returned an error."),
+    "NOT_QUERIED":    ("NOT QUERIED",  "Target domain offline or scan blocked before provider call was sent."),
+    "NOT_CONFIGURED": ("NOT QUERIED",  "Provider key not configured — call was never sent."),
+    "UNAVAILABLE":    ("UNAVAILABLE",  "Provider call attempted but returned an error."),
     "ERROR":          ("ERROR",        "Provider returned an unexpected response."),
     "TIMEOUT":        ("TIMEOUT",      "Provider did not respond within the time limit."),
     "RATE_LIMITED":   ("RATE LIMITED", "Provider rate-limited this request (HTTP 429)."),
@@ -169,42 +171,20 @@ def _display_value(value):
     return str(value)
 
 
-def _render_urlscan_matches(matches: list) -> None:
-    """Render urlscan result list as structured cards instead of a raw Python dict."""
-    if not matches:
-        return
-    for i, m in enumerate(matches, 1):
-        page = m.get("page", {}) if isinstance(m.get("page"), dict) else {}
-        task = m.get("task", {}) if isinstance(m.get("task"), dict) else {}
-        stats = m.get("stats", {}) if isinstance(m.get("stats"), dict) else {}
-        scan_id = m.get("id") or task.get("uuid") or "—"
-        domain = page.get("domain") or page.get("url") or "—"
-        country = page.get("country") or "—"
-        malicious = int(stats.get("malicious", 0) or 0)
-        total = sum(int(stats.get(k, 0) or 0) for k in ("malicious", "undetected", "benign"))
-        submitted = task.get("time") or "—"
-        url_link = f"https://urlscan.io/result/{scan_id}/" if scan_id != "—" else "#"
-        flag = "🔴" if malicious > 0 else "🟢"
-        st.markdown(
-            f'<div class="source-evidence" style="margin-bottom:6px">'
-            f'<b>urlscan match {i}</b> '
-            f'<a href="{html.escape(url_link)}" target="_blank" style="font-size:.8rem">view scan ↗</a>'
-            f'<div><b>Domain:</b> {html.escape(str(domain))}</div>'
-            f'<div><b>Country:</b> {html.escape(str(country))}</div>'
-            f'<div><b>Submitted:</b> {html.escape(str(submitted))}</div>'
-            f'<div><b>Verdict:</b> {flag} {malicious} malicious / {total} engines</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-
 def evidence_card(title, data, *, hide_keys=()):
     """Render backend evidence as labeled fields; never dumps raw Python dicts."""
     data = data if isinstance(data, dict) else {"status": "UNAVAILABLE", "reason": "No response was available."}
     status = str(data.get("status", "")).upper()
+    if not status:
+        if data.get("model_available") is True:
+            status = "AVAILABLE"
+        elif data.get("model_available") is False:
+            status = "UNAVAILABLE"
+        else:
+            status = "AVAILABLE"
     unavailable = status in UNAVAILABLE_STATUSES or bool(data.get("error"))
     card_class = "source-unavailable" if unavailable else "source-evidence"
-    label, _default_note = _STATE_LABELS.get(status, (status or "UNAVAILABLE", ""))
+    label, _default_note = _STATE_LABELS.get(status, (status or "AVAILABLE", ""))
     ignored = set(hide_keys) | {"html", "status", "reason", "error", "source", "matches"}
     # Build field rows — skip nested lists/dicts that have their own renderer
     fields = "".join(
@@ -213,24 +193,117 @@ def evidence_card(title, data, *, hide_keys=()):
     )
     reason = data.get("reason") or data.get("error")
     reason_html = f"<small>{html.escape(str(reason))}</small>" if reason else ""
+    display_title = str(title).upper()
     st.markdown(
-        f'<div class="{card_class}"><b>{html.escape(title)}</b><span>{html.escape(label)}</span>{reason_html}{fields}</div>',
+        f'<div class="{card_class}"><b style="font-size:1.12rem;font-weight:850;letter-spacing:.04em;color:#3d2b1f">{html.escape(display_title)}</b><span>{html.escape(label)}</span>{reason_html}{fields}</div>',
         unsafe_allow_html=True,
     )
-    # Render urlscan matches as structured cards
-    matches = data.get("matches")
-    if isinstance(matches, list) and matches:
-        _render_urlscan_matches(matches)
+
+
+def render_scan_progress_step(slot, pct: int, title: str, detail: str):
+    """Render an active, living status bar on screen that stays visible while backend analysis executes."""
+    slot.markdown(
+        f'<div style="margin: 16px 0 24px; padding: 14px 18px; background: #fffdf9; border: 1.5px solid #ded0b8; border-left: 5px solid #7c5448; border-radius: 10px; box-shadow: 0 4px 14px rgba(43,36,32,0.06);">'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">'
+        f'<span style="font: 800 0.98rem \'Inter\', sans-serif; color: #3d2b1f;">{title}</span>'
+        f'<span style="font: 700 0.85rem \'Inter\', sans-serif; color: #7c5448; background: #f4ede4; padding: 2px 8px; border-radius: 4px;">{pct}%</span>'
+        f'</div>'
+        f'<div style="font-size: 0.82rem; color: #5c5148; margin-bottom: 8px;">{detail}</div>'
+        f'<div style="height: 7px; background: #efe6dc; border-radius: 999px; overflow: hidden;">'
+        f'<div style="height: 100%; width: {pct}%; background: linear-gradient(90deg, #b28574, #7c5448); border-radius: inherit; transition: width 0.2s ease;"></div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+
+def source_card(name, item):
+    """Render one provider result with clear, non-misleading threat intelligence badges."""
+    if not isinstance(item, dict):
+        item = {"status": "NOT_QUERIED", "reason": "Target host offline or unresolvable. Provider call was skipped.", "malicious": None}
+    status = item.get("status", "NOT_QUERIED")
+    evidence = item.get("evidence")
+    flat_evidence: dict = {}
+    if isinstance(evidence, dict):
+        flat_evidence = evidence
+    elif isinstance(evidence, list):
+        flat_evidence = {"matches": evidence}
+
+    merged = {**item, **flat_evidence}
+
+    target_host = flat_evidence.get("target_host") or flat_evidence.get("host") or ""
+    tot_engines = flat_evidence.get("total_engines")
+
+    if status == "AVAILABLE":
+        is_mal = item.get("malicious", False)
+        scan_src = flat_evidence.get("scan_source") or "existing_report"
+        src_text = "FRESHLY SCANNED ✅" if scan_src == "freshly_scanned" else "EXISTING REPORT ℹ️"
+        merged["Scan Mode"] = src_text
+        if is_mal:
+            merged["Threat Status"] = "🔴 CONFIRMED MALICIOUS RECORD"
+        elif flat_evidence.get("is_legit"):
+            merged["Threat Status"] = "🟢 VERIFIED LEGITIMATE DOMAIN"
+        elif flat_evidence.get("is_suspicious_ip"):
+            merged["Threat Status"] = "⚠️ UNINDEXED THREAT (RAW IP HOST)"
+        elif flat_evidence.get("is_suspicious_brand"):
+            merged["Threat Status"] = "⚠️ UNINDEXED THREAT (SUSPICIOUS / FAKE DOMAIN)"
+        else:
+            merged["Threat Status"] = "⚠️ UNINDEXED THREAT (0 VENDOR DETECTIONS)"
+
+        if tot_engines:
+            merged["Database Index"] = f"{item.get('malicious_count', flat_evidence.get('malicious', 0))} / {tot_engines} Security Vendors Flagged"
+        else:
+            merged["Database Index"] = "Fresh Scan Completed" if scan_src == "freshly_scanned" else "Record Found in Provider Database"
+    elif status == "PENDING":
+        merged["Threat Status"] = "⏳ SCAN PENDING (Submitted to Engine)"
+        merged["Database Index"] = "Scan In Progress on Provider Engine"
+        merged["reason"] = (item.get("reason") or "Scan actively submitted to provider cloud engine.") + " (Analysis in progress; result will update when analysis finishes)."
+    elif status == "NO_MATCH":
+        if flat_evidence.get("is_legit"):
+            merged["Threat Status"] = "🟢 VERIFIED LEGITIMATE DOMAIN"
+            merged["Database Index"] = "0 Malicious Records (Verified Trusted Brand)"
+        elif flat_evidence.get("is_suspicious_ip"):
+            merged["Threat Status"] = "⚠️ UNINDEXED THREAT (RAW IP HOST)"
+            merged["Database Index"] = "0 Feed Matches (Raw IP Address)"
+        elif flat_evidence.get("is_suspicious_brand"):
+            merged["Threat Status"] = "⚠️ UNLISTED IN FEED (SUSPICIOUS / FAKE DOMAIN)"
+            merged["Database Index"] = "0 Feed Matches (Newly Generated Link)"
+        else:
+            merged["Threat Status"] = "⚠️ UNINDEXED THREAT (UNLISTED IN FEED)"
+            if tot_engines:
+                merged["Database Index"] = f"0 / {tot_engines} Security Vendors Flagged (Unindexed Target)"
+            else:
+                merged["Database Index"] = "0 Matches in Active Feed Records (Unlisted Target)"
+        merged["reason"] = item.get("reason") or f"Link verified against database — 0 adverse malicious entries found for '{target_host}'."
+    elif status in ("TIMEOUT", "UNAVAILABLE"):
+        merged["Threat Status"] = "⚪ HOST UNREACHABLE / TIMED OUT"
+        merged["Database Index"] = f"Unreachable Host ({target_host})" if target_host else "Unreachable Host or Engine Timeout"
+        merged["reason"] = item.get("reason") or "Target host is offline, unresolvable, or provider engine timed out."
+    else:
+        merged["Threat Status"] = "⚪ NOT QUERIED / SKIPPED"
+        merged["Database Index"] = "Not Queried (Host Offline or Provider Skipped)"
+        merged["reason"] = item.get("reason") or "Target host offline, API key missing, or call skipped."
+
+    evidence_card(name, merged, hide_keys={"evidence", "malicious", "strong", "provider", "timestamp", "target_host", "feed_size", "total_engines", "unlisted_phishing", "brand_impersonated", "verified_legitimate", "scan_source", "is_legit", "is_suspicious_brand", "is_suspicious_ip"})
 
 
 def render_url_evidence(result, scan_type="URL"):
-    """Structured shared result report for URL, QR, OCR and email scans."""
-    verdict = result.get("verdict", "INSUFFICIENT_EVIDENCE")
+    """Render structured evidence cards for a URL scan result."""
+    target = result.get("url") or result.get("normalized_url") or "URL"
+    verdict = str(result.get("verdict", "INSUFFICIENT_EVIDENCE"))
+    confidence = str(result.get("confidence_strength", "insufficient")).title()
+    
+    # Hard enforcement: model_available MUST be False if genuine features (25 or 30) were not collected
+    model = result.get("model") if isinstance(result.get("model"), dict) else {}
+    if not model.get("features") or len(model.get("features", [])) not in (25, 30):
+        model["model_available"] = False
+        result["model_available"] = False
+
+    _ml_flag = bool(result.get("model_available", False))
+
     tone = {"CONFIRMED_MALICIOUS": "critical", "LIKELY_PHISHING": "high", "SUSPICIOUS": "medium", "LIKELY_LEGITIMATE": "low"}.get(verdict, "unknown")
     label = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW", "unknown": "INSUFFICIENT EVIDENCE"}[tone]
-    target = result.get("normalized_url") or result.get("url") or "Unavailable"
     original_url = result.get("url") or target
-    _ml_flag = result.get("model_available", False)
     risk_score = result.get("risk", 0)
     confidence = str(result.get("confidence_strength", "insufficient")).title()
     verdict_source = result.get("verdict_source", "AI/ML Classifier" if _ml_flag else "Rule-Based Heuristics & Threat Intelligence")
@@ -246,23 +319,41 @@ def render_url_evidence(result, scan_type="URL"):
     )
 
     # Explicit Pipeline & Source Disclaimer Banner right below header
+    model_res = result.get("model") if isinstance(result.get("model"), dict) else {}
+    model_pred = model_res.get("prediction")
+    model_conf = model_res.get("confidence", 0)
+
+    is_phish_verdict = verdict in ("LIKELY_PHISHING", "SUSPICIOUS", "CONFIRMED_MALICIOUS")
+    is_phish_model = (model_pred == 1)
+    is_disagreement = _ml_flag and (is_phish_verdict != is_phish_model)
+
     if not _ml_flag:
         st.markdown(
             f'<div class="evidence-card" style="border-left:4px solid #f59e0b;margin-bottom:.75rem;padding:.75rem 1rem">'
-            f'<div style="font-weight:700;color:#d97706;margin-bottom:.2rem">⚠️ ANALYSIS PIPELINE NOTICE: ML Model Unavailable</div>'
-            f'<div style="font-size:.84rem;line-height:1.45;color:var(--text)">'
+            f'<div style="font-weight:700;color:#d97706;margin-bottom:.2rem">⚠️ ANALYSIS PIPELINE NOTICE: Live ML Classifier Skipped</div>'
+            f'<div style="font-size:.84rem;line-height:1.45;color:#374151">'
             f'<b>Verdict Basis:</b> Driven by <b>Rule-Based Heuristics & Threat Intelligence</b> (Brand Impersonation, Path & Keyword Analysis).<br>'
             f'<b>Risk Score ({risk_score}/100):</b> Calculated from rule-based indicators and available threat intelligence.<br>'
-            f'<b>ML Telemetry:</b> The 30-feature Legacy UCI model was <i>skipped</i> because required live telemetry could not be collected for this URL.'
+            f'<b>ML Telemetry:</b> Live 25-feature signal collection was <i>skipped</i> for this target input.'
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+    elif is_disagreement:
+        st.markdown(
+            f'<div class="evidence-card" style="border-left:4px solid #dc2626;margin-bottom:.75rem;padding:.75rem 1rem">'
+            f'<div style="font-weight:700;color:#dc2626;margin-bottom:.2rem">🛡️ ANALYSIS PIPELINE NOTICE: Security Policy Override Applied</div>'
+            f'<div style="font-size:.84rem;line-height:1.45;color:#374151">'
+            f'<b>Verdict Basis:</b> Overridden to <b>{html.escape(verdict.replace("_", " ").title())}</b> by Security Policy Rules (Brand Impersonation / Threat Intel).<br>'
+            f'<b>ML Model Status:</b> Active (Predicted <code>{"Class 1 Phishing" if is_phish_model else "Class 0 Legitimate"}</code> with {model_conf}% score, but was overridden by rule-based brand impersonation safeguards).'
             f'</div></div>',
             unsafe_allow_html=True
         )
     else:
         st.markdown(
-            f'<div class="evidence-card" style="border-left:4px solid #10b981;margin-bottom:.75rem;padding:.75rem 1rem">'
-            f'<div style="font-weight:700;color:#059669;margin-bottom:.2rem">✅ ANALYSIS PIPELINE NOTICE: AI/ML Model Active</div>'
-            f'<div style="font-size:.84rem;line-height:1.45;color:var(--text)">'
-            f'<b>Verdict Basis:</b> Active 30-feature Random Forest ML Model corroborated by live threat intelligence.'
+            f'<div class="evidence-card" style="border-left:4px solid #7c5448;margin-bottom:.75rem;padding:.75rem 1rem">'
+            f'<div style="font-weight:700;color:#4a3728;margin-bottom:.2rem">✅ ANALYSIS PIPELINE NOTICE: 25-Feature Live ML Model Active</div>'
+            f'<div style="font-size:.84rem;line-height:1.45;color:#374151">'
+            f'<b>Verdict Basis:</b> Active 25-Feature Random Forest ML Model (schema <code>uci-live-25-v1</code>) corroborated by live threat intelligence.'
             f'</div></div>',
             unsafe_allow_html=True
         )
@@ -280,15 +371,15 @@ def render_url_evidence(result, scan_type="URL"):
         )
 
     # Final Verdict Card
-    source_badge = '<span style="background:#374151;color:#f3f4f6;padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:600;margin-left:8px">RULE-BASED & THREAT INTEL</span>' if not _ml_flag else '<span style="background:#065f46;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:600;margin-left:8px">AI/ML MODEL ACTIVE</span>'
-
-    reasons = result.get("reasons", [])
-    rule_count = len([r for r in reasons if "Rule:" in r or "indicator" in r.lower() or "brand" in r.lower() or "keyword" in r.lower()])
-    conf_explanation = (
-        f"Confidence is <b>{confidence}</b> based on {rule_count if rule_count > 0 else 'multiple'} strong rule/reputation triggers (e.g. Brand Impersonation, Credential/Verification path, Suspicious Keywords). ML Model was <i>unavailable</i>."
-        if not _ml_flag else
-        f"Confidence is <b>{confidence}</b> based on validated 30-feature ML model prediction corroborated by threat intelligence."
-    )
+    if not _ml_flag:
+        source_badge = '<span style="background:#374151;color:#f3f4f6;padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:600;margin-left:8px">RULE-BASED & THREAT INTEL</span>'
+        conf_explanation = f"Confidence is <b>{confidence}</b> based on lexical brand-similarity analysis, path indicators, and threat intelligence. ML Model was <i>unavailable</i>."
+    elif is_disagreement:
+        source_badge = '<span style="background:#b91c1c;color:#fef2f2;padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:600;margin-left:8px">SECURITY POLICY OVERRIDE</span>'
+        conf_explanation = f"Confidence is <b>{confidence}</b> based on brand impersonation heuristics and threat intelligence. The 25-feature ML model predicted {'Phishing' if is_phish_model else 'Legitimate'} ({model_conf}%), but security policy rules overrode the final verdict."
+    else:
+        source_badge = '<span style="background:#065f46;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:600;margin-left:8px">AI/ML MODEL ACTIVE</span>'
+        conf_explanation = f"Confidence is <b>{confidence}</b> based on validated 25-feature live ML model prediction ({model_conf}%) corroborated by threat intelligence."
 
     st.markdown(
         f'<div class="evidence-card"><span class="card-kicker">FINAL VERDICT & CONFIDENCE ATTRIBUTION</span>'
@@ -297,28 +388,6 @@ def render_url_evidence(result, scan_type="URL"):
         f'</div>',
         unsafe_allow_html=True,
     )
-
-    def source_card(name, item):
-        """Render one provider result with accurate three-state labeling."""
-        if not isinstance(item, dict):
-            item = {"status": "UNAVAILABLE", "reason": "Provider did not return a result"}
-        status = item.get("status", "UNAVAILABLE")
-        evidence = item.get("evidence")
-        flat_evidence: dict = {}
-        if isinstance(evidence, dict):
-            flat_evidence = evidence
-        elif isinstance(evidence, list):
-            flat_evidence = {"matches": evidence}
-        merged = {**item, **flat_evidence}
-        if status == "NOT_CONFIGURED" and not item.get("reason"):
-            merged["reason"] = "API key not set — this provider was NOT queried for this scan."
-        elif status == "NO_MATCH" and not item.get("reason"):
-            merged["reason"] = "Queried successfully — NO MATCH found. (Note: No existing record found in provider index; new zero-day phishing URLs often have no prior records. NOT proof of safety)."
-        elif status == "NO_MATCH":
-            existing = merged.get("reason", "")
-            if "not proof of safety" not in existing.lower() and "not a clean verdict" not in existing.lower():
-                merged["reason"] = existing + " — ℹ️ NO MATCH: Absence of an existing record is NOT proof of safety."
-        evidence_card(name, merged, hide_keys={"evidence"})
 
     overview, model_tab, website_tab, network_tab, intel_tab, mitre_tab, copilot_tab = st.tabs(["◫ Overview", "⌁ ML Prediction", "◉ Website & TLS", "◌ WHOIS & DNS", "◈ Threat Intel", "▦ MITRE Mapping", "✦ Copilot Explanation"])
     with overview:
@@ -338,10 +407,12 @@ def render_url_evidence(result, scan_type="URL"):
         strength   = str(result.get("confidence_strength", "insufficient")).title()
 
         _basis_parts = []
-        if model_available:
-            _basis_parts.append("<b>ML Model Engine:</b> ✅ Active 30-Feature Classifier")
+        if is_disagreement:
+            _basis_parts.append(f"<b>ML Model Engine:</b> ⚠️ Disagreed (Predicted <code>{'Class 1 Phishing' if is_phish_model else 'Class 0 Legitimate'}</code> with {model_conf}% score — Overridden by Security Policy)")
+        elif model_available:
+            _basis_parts.append("<b>ML Model Engine:</b> ✅ Active 25-Feature Live Classifier (schema <code>uci-live-25-v1</code>)")
         else:
-            _basis_parts.append("<b>ML Model Engine:</b> ⚠️ Unavailable (Skipped — Telemetry missing; live data required)")
+            _basis_parts.append("<b>ML Model Engine:</b> ⚠️ Unavailable (Live 25-feature signal collection failed or target unreachable)")
 
         _basis_parts.append("<b>Rule-Based Heuristic Engine:</b> ✅ Active (Evaluated Brand Impersonation, URL Path, Structural & Keyword Indicators)")
 
@@ -369,38 +440,43 @@ def render_url_evidence(result, scan_type="URL"):
         )
 
         left, middle, right = st.columns(3)
-        left.metric("Confidence", strength, delta="High rule trigger consensus" if not model_available else "Validated ML model")
+        left.metric("Confidence", strength, delta="High rule trigger consensus" if not model_available else ("Policy override applied" if is_disagreement else "Validated ML model"))
         middle.metric(
             "Brand Detected",
             brand_val.title() if brand_val != "Unknown" else "None",
-            delta=f"{similarity}% similarity" if similarity > 0 else None,
+            delta=f"{similarity}% similarity" if similarity > 0 else "No brand impersonation",
+            delta_color="normal" if similarity > 0 else "off"
         )
         right.metric(
             "ML Model",
-            "Active" if model_available else "Unavailable",
-            delta="Rule-based analysis used" if not model_available else "30-Feature RF",
+            "Overridden" if is_disagreement else ("Active" if model_available else "Unavailable"),
+            delta="Rule-based override" if is_disagreement else ("Rule-based analysis used" if not model_available else "25-Feature Live RF"),
             delta_color="off",
         )
-        if not model_available:
+        if is_disagreement:
             st.caption(
-                "⚠️ <b>Note on ML Availability:</b> The Legacy UCI 30-feature ML model requires live website telemetry "
-                "(traffic rank, PageRank, Google index) that could not be collected for this URL. "
-                "The <b>Likely Phishing</b> verdict and <b>85/100 Risk Score</b> above are entirely based on "
-                "rule-based lexical/structural heuristics (e.g. PayPal brand impersonation on non-official host, "
-                "verification path `/verify`, suspicious keywords) and available threat-intelligence."
+                f"🛡️ <b>Security Policy Override:</b> The 25-feature ML model predicted <b>{'Phishing' if is_phish_model else 'Legitimate'} ({model_conf}%)</b> based on structural signals alone. "
+                f"However, because the domain impersonates <b>'{brand_val.title()}'</b> ({similarity}% similarity) on an unauthorized host, "
+                f"the security policy engine overrode the final verdict to <b>{verdict.replace('_', ' ').title()} ({risk_score}/100 Risk)</b> to protect against brand phishing."
+            )
+        elif not model_available:
+            st.caption(
+                "⚠️ <b>Note on ML Availability:</b> The 25-feature live ML model requires a valid URL target with reachable host data. "
+                "When live signal collection is skipped or fails, the verdict is calculated from "
+                "rule-based lexical/structural heuristics (e.g. brand impersonation on non-official host, "
+                "suspicious paths) and available threat-intelligence."
             )
     with model_tab:
         model = result.get("model", {})
-        if not model.get("model_available"):
-            # Don't just show UNAVAILABLE — explain what ran instead
-            model_err = model.get("error") or "LEGACY UCI 30-FEATURE MODEL unavailable/conditional telemetry"
+        model_available = bool(result.get("model_available", False)) and bool(model.get("model_available", False)) and len(model.get("features", [])) in (25, 30)
+        if not model_available:
+            model_err = model.get("error") or "Live 25-Feature Model unavailable for this input"
             st.markdown(
                 f'<div class="source-unavailable">'
-                f'<b>LEGACY UCI 30-FEATURE MODEL</b>'
-                f'<span>NOT RUN</span>'
-                f'<small>The 30-feature UCI phishing model requires live website telemetry '
-                f'(traffic rank, PageRank, Google index) that could not be collected for this URL. '
-                f'This does <strong>not</strong> mean the URL is safe — it means the ML component was skipped.</small>'
+                f'<b>25-FEATURE LIVE RANDOM FOREST CLASSIFIER</b>'
+                f'<span>UNAVAILABLE</span>'
+                f'<small>The 25-feature live model requires a valid URL target with reachable host data. '
+                f'This does <strong>not</strong> mean the URL is safe — it means live signal collection failed.</small>'
                 f'<div style="margin-top:.6rem;font-size:.82rem">'
                 f'<b>What ran instead:</b></div>'
                 f'<ul style="font-size:.82rem;margin:.3rem 0 0;padding-left:1.2rem">'
@@ -414,39 +490,254 @@ def render_url_evidence(result, scan_type="URL"):
                 unsafe_allow_html=True,
             )
         else:
-            evidence_card("LEGACY UCI 30-FEATURE MODEL", model, hide_keys={"features"})
+            model_copy = dict(model)
+            model_copy["status"] = "AVAILABLE"
+            pred_val = model_copy.get("prediction")
+            pred_label = "🔴 PHISHING (Class 1)" if pred_val == 1 else "🟢 LEGITIMATE (Class 0)" if pred_val == 0 else "Unknown"
+            conf_val = model_copy.get("confidence", 0)
+            feats_count = len(model.get("features", []))
+            model_title = f"{feats_count}-FEATURE LIVE RANDOM FOREST CLASSIFIER" if feats_count == 25 else "30-FEATURE LEGACY CLASSIFIER"
+
+            if is_disagreement:
+                st.warning(
+                    f"🛡️ **SECURITY POLICY OVERRIDE APPLIED**: The ML model scored this input as **{pred_label} ({conf_val}% phishing score)** "
+                    f"based on structural features. However, the overall verdict was upgraded to **{verdict.replace('_', ' ').title()} ({risk_score}/100 Risk)** "
+                    f"because the security policy engine detected brand impersonation for **'{brand_val.title()}'** ({similarity}% similarity) on an unauthorized host."
+                )
+            else:
+                st.success(
+                    f"✅ **UNANIMOUS CONSENSUS**: The 25-feature ML model (**{pred_label}**) and Security Policy Rules unanimously agree on the final verdict **{verdict.replace('_', ' ').title()}**."
+                )
+
+            st.markdown(
+                f'<div class="evidence-card" style="border-left:4px solid #8f6559;margin-bottom:1rem">'
+                f'<span class="card-kicker">{model_title}</span>'
+                f'<h4>Status: <span style="color:#7c5448">ACTIVE</span> · Prediction: {pred_label}</h4>'
+                f'<p style="font-size:.85rem;margin-top:.3rem"><b>This Scan Confidence:</b> {conf_val}% Phishing Probability &nbsp;|&nbsp; <b>Model Benchmark Accuracy:</b> 94.08% (UCI Held-Out Test Set)</p>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            features = model.get("features", [])
+            feature_names_list_25 = [
+                ("having_IP_Address", "Having IP Address in URL"),
+                ("URL_Length", "URL Character Length (>75 chars)"),
+                ("Shortining_Service", "URL Shortening Service Detected"),
+                ("having_At_Symbol", "Having '@' Symbol in URL"),
+                ("double_slash_redirecting", "Double Slash '//' Redirect"),
+                ("Prefix_Suffix", "Hyphen '-' in Domain Name"),
+                ("having_Sub_Domain", "Subdomain Depth Level"),
+                ("SSLfinal_State", "SSL / TLS Certificate State"),
+                ("Domain_registeration_length", "Domain Registration Age"),
+                ("Favicon", "Favicon Loaded from External Domain"),
+                ("port", "Non-Standard Port Usage"),
+                ("HTTPS_token", "HTTPS Token in Host Domain"),
+                ("Request_URL", "External Resource Request Ratio"),
+                ("URL_of_Anchor", "Anchor Tags Pointing Outside"),
+                ("Links_in_tags", "Script / Meta Link Ratio"),
+                ("SFH", "Server Form Handler (SFH)"),
+                ("Submitting_to_email", "Submitting Credentials to Email"),
+                ("Abnormal_URL", "Abnormal Hostname Pattern"),
+                ("Redirect", "HTTP Redirect Hop Count"),
+                ("on_mouseover", "Mouseover Status Bar Changes"),
+                ("RightClick", "Right Click Context Menu Disabled"),
+                ("popUpWidnow", "Pop-up Window with Form Fields"),
+                ("Iframe", "Hidden IFrames Rendered"),
+                ("age_of_domain", "WHOIS Domain Age"),
+                ("DNSRecord", "DNS A/AAAA Record Present"),
+            ]
+            feature_names_list = feature_names_list_25 if feats_count == 25 else feature_names_list_25 + [
+                ("web_traffic", "Alexa / Tranco Web Traffic Rank"),
+                ("Page_Rank", "Google PageRank Index"),
+                ("Google_Index", "Indexed on Google Search"),
+                ("Links_pointing_to_page", "Inbound Backlinks Count"),
+                ("Statistical_report", "Phishing Blacklist Stat Report")
+            ]
+            if features:
+                st.subheader(f"📊 {len(features)} UCI Feature Extraction Breakdown")
+                f_cols = st.columns(2)
+                for idx, (f_name, f_desc) in enumerate(feature_names_list):
+                    val = features[idx] if idx < len(features) else 0
+                    val_str = "🔴 Phishing Indicator (-1)" if val == -1 else "🟢 Legitimate (+1)" if val == 1 else "🟡 Neutral / Suspicious (0)"
+                    col = f_cols[idx % 2]
+                    col.markdown(
+                        f'<div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:.82rem">'
+                        f'<b>{idx+1}. {html.escape(f_desc)}</b> <code>({f_name})</code><br>'
+                        f'Value: <span style="font-weight:600">{val_str}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                evidence_card("LIVE MODEL", model_copy, hide_keys={"features"})
+
     with website_tab:
-        evidence_card("Website Analysis", result.get("website", {}))
+        website = result.get("website", {})
         tls = result.get("tls", {})
-        if tls.get("error"): source_card("TLS", {"status": "UNAVAILABLE", "reason": tls["error"]})
-        else: evidence_card("TLS", tls)
-    with network_tab:
-        evidence_card("DNS", result.get("dns", {}))
-        whois = result.get("whois")
-        if not isinstance(whois, dict) or whois.get("status") != "AVAILABLE": source_card("WHOIS / RDAP", whois)
-        else: evidence_card("WHOIS / RDAP", whois)
-    with intel_tab:
-        # ── Prominent Disclaimer ──────────────────────────────────────────────
+        norm_url = result.get("normalized_url", target)
+        parsed_url = urlparse("https://" + norm_url.lstrip("https://").lstrip("http://"))
+        host_name = (parsed_url.hostname or norm_url).lower()
+        tld_suffix = host_name.split(".")[-1] if "." in host_name else ""
+
+        high_risk_tlds = {"xyz", "top", "online", "site", "live", "tech", "store", "tk", "ml", "ga", "cf", "gq", "work", "click", "link", "zip", "mov", "verify", "pay"}
+        tld_risk_badge = "🔴 HIGH RISK / DISPOSABLE TLD" if tld_suffix in high_risk_tlds else "🟢 STANDARD GENERIC TLD"
+        hyphen_count = host_name.count("-")
+        sub_count = max(0, len(host_name.split(".")) - 2)
+
         st.markdown(
-            '<div class="evidence-card" style="margin-bottom:.75rem;border-left:4px solid #3b82f6">'
-            '<span class="card-kicker">REPUTATION DATABASE DISTINCTION</span>'
-            '<h4 style="margin-top:.2rem;font-size:.95rem">Understanding VirusTotal & URLscan Results</h4>'
-            '<p style="font-size:.83rem;margin:.3rem 0 0;line-height:1.45">'
-            '<strong>ℹ️ NO MATCH does NOT mean the URL is safe.</strong><br>'
-            'A <i>"No Match"</i> result simply means no previous user or analyst has submitted this specific URL to VirusTotal, URLscan, or URLhaus database.<br>'
-            'Because phishing campaigns frequently generate brand-new, zero-day domains, <b>the absence of an existing malicious record is typical for active phishing links</b>.<br>'
-            '• <strong>AVAILABLE:</strong> Provider returned existing telemetry/scans.<br>'
-            '• <strong>NO MATCH:</strong> Provider queried successfully — zero existing records found.<br>'
-            '• <strong>NOT QUERIED:</strong> Provider API key not configured.'
+            f'<div class="evidence-card" style="border-left:4px solid #7c5448;margin-bottom:1rem">'
+            f'<span class="card-kicker">DOMAIN & TLD STRUCTURE ANALYSIS</span>'
+            f'<h4>TLD: <code style="font-size:1.1rem">.{html.escape(tld_suffix)}</code> · {tld_risk_badge}</h4>'
+            f'<div style="font-size:.83rem;margin-top:.4rem;line-height:1.6">'
+            f'• <b>Host Domain:</b> <code>{html.escape(host_name)}</code><br>'
+            f'• <b>Hyphen Count in Domain:</b> {hyphen_count} {"⚠️ (Hyphens frequently used in brand spoofing)" if hyphen_count > 0 else "🟢 (None)"}<br>'
+            f'• <b>Subdomain Count:</b> {sub_count} {"⚠️ (Multi-subdomain structure)" if sub_count > 1 else "🟢 (Standard)"}'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        reachable = website.get("reachable", False)
+        reach_badge = "🔴 UNREACHABLE / OFFLINE" if not reachable else "🟢 ONLINE & REACHABLE"
+        notes = website.get("notes") or website.get("title") or "No HTML title extracted"
+        forms_val = website.get("forms", 0)
+        forms_cnt = len(forms_val) if isinstance(forms_val, (list, tuple, dict)) else int(forms_val or 0)
+        iframes_val = website.get("iframes", 0)
+        iframes_cnt = len(iframes_val) if isinstance(iframes_val, (list, tuple, dict)) else int(iframes_val or 0)
+
+        st.markdown(
+            f'<div class="evidence-card" style="border-left:4px solid {"#b28574" if not reachable else "#7c5448"};margin-bottom:1rem">'
+            f'<span class="card-kicker">WEBSITE INSPECTION & DOM ANALYZER</span>'
+            f'<h4>Status: {reach_badge}</h4>'
+            f'<div style="font-size:.83rem;margin-top:.4rem;line-height:1.6">'
+            f'• <b>HTTP Title / Inspection Note:</b> {html.escape(str(notes))}<br>'
+            f'• <b>Form Elements Found:</b> {forms_cnt} {"⚠️ Password / Input forms present" if forms_cnt > 0 else "🟢 No forms"}<br>'
+            f'• <b>Embedded IFrames:</b> {iframes_cnt} {"⚠️ Hidden iframe tags present" if iframes_cnt > 0 else "🟢 No IFrames"}'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        tls_connected = tls.get("connected", False)
+        tls_https = tls.get("https", False)
+        tls_valid = tls.get("certificate_valid", False)
+        tls_badge = "🔒 SECURE HTTPS (Valid SSL)" if (tls_https and tls_connected and tls_valid) else "⚠️ INSECURE HTTP / OFFLINE SSL"
+        issuer = tls.get("issuer") or "N/A"
+        days_left = tls.get("days_remaining") or "N/A"
+
+        st.markdown(
+            f'<div class="evidence-card" style="border-left:4px solid {"#4a3728" if (tls_https and tls_connected and tls_valid) else "#8f6559"}">'
+            f'<span class="card-kicker">TLS & HTTPS SECURITY CERTIFICATE</span>'
+            f'<h4>Status: {tls_badge}</h4>'
+            f'<div style="font-size:.83rem;margin-top:.4rem;line-height:1.6">'
+            f'• <b>HTTPS Connection:</b> {"Yes" if tls_https else "No"}<br>'
+            f'• <b>Certificate Authority / Issuer:</b> {html.escape(str(issuer))}<br>'
+            f'• <b>Certificate Validity Days Remaining:</b> {days_left}'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    with network_tab:
+        dns = result.get("dns", {})
+        whois = result.get("whois", {})
+
+        dns_notes = dns.get("notes") or "DNS resolution completed"
+        ips = dns.get("ip_addresses") or dns.get("ips") or []
+        mx_records = dns.get("mx_records") or []
+        ns_records = dns.get("nameservers") or []
+
+        st.markdown(
+            f'<div class="evidence-card" style="border-left:4px solid #3d2b1f;margin-bottom:1rem">'
+            f'<span class="card-kicker">DNS RECORDS INTELLIGENCE</span>'
+            f'<h4>Status: {"🟢 RESOLVED" if ips else "⚠️ HOST UNRESOLVABLE / NO DNS RECORD"}</h4>'
+            f'<div style="font-size:.83rem;margin-top:.4rem;line-height:1.6">'
+            f'• <b>Resolved IP Addresses (A/AAAA):</b> {", ".join(f"<code>{html.escape(str(ip))}</code>" for ip in ips) if ips else "<i>None (Host unresolvable)</i>"}<br>'
+            f'• <b>Mail Servers (MX Records):</b> {", ".join(html.escape(str(mx)) for mx in mx_records) if mx_records else "<i>None (No mail server configured — suspicious for business domain)</i>"}<br>'
+            f'• <b>Nameservers (NS Records):</b> {", ".join(html.escape(str(ns)) for ns in ns_records) if ns_records else "<i>None</i>"}<br>'
+            f'• <b>Resolution Note:</b> {html.escape(str(dns_notes))}'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        whois_dict = whois if isinstance(whois, dict) else {}
+        age_days = whois_dict.get("age_days")
+        age_str = f"{age_days} Days" if age_days is not None else "Unknown (WHOIS record unavailable for offline/new host)"
+        age_badge = "🔴 HIGH RISK (<30 Days Old)" if (age_days is not None and age_days < 30) else "🟢 ESTABLISHED DOMAIN" if (age_days is not None and age_days > 365) else "🟡 MODERATE AGE" if age_days is not None else "⚠️ UNKNOWN AGE"
+
+        registrar = whois_dict.get("registrar") or "N/A"
+        created_date = whois_dict.get("creation_date") or "N/A"
+        expiry_date = whois_dict.get("expiration_date") or "N/A"
+        country_code = whois_dict.get("country") or "N/A"
+        whois_verdict = whois_dict.get("verdict") or whois_dict.get("notes") or "WHOIS lookup completed."
+
+        st.markdown(
+            f'<div class="evidence-card" style="border-left:4px solid #8f6559">'
+            f'<span class="card-kicker">WHOIS & RDAP DOMAIN REGISTRATION INTELLIGENCE</span>'
+            f'<h4>Domain Age: <code>{html.escape(str(age_str))}</code> · {age_badge}</h4>'
+            f'<div style="font-size:.83rem;margin-top:.4rem;line-height:1.6">'
+            f'• <b>Registrar Name:</b> {html.escape(str(registrar))}<br>'
+            f'• <b>Registration Creation Date:</b> {html.escape(str(created_date))}<br>'
+            f'• <b>Domain Expiration Date:</b> {html.escape(str(expiry_date))}<br>'
+            f'• <b>Registrant Country:</b> {html.escape(str(country_code))}<br>'
+            f'• <b>Security Verdict:</b> {html.escape(str(whois_verdict))}'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    with intel_tab:
+        providers = result.get("providers", {})
+
+        # ── NO MATCH disclaimer ───────────────────────────────────────────────
+        st.markdown(
+            '<div class="evidence-card" style="border-left:4px solid #d97706;margin-bottom:.85rem">'
+            '<span class="card-kicker">IMPORTANT — READ BEFORE INTERPRETING</span>'
+            '<p style="font-size:.83rem;margin:.35rem 0 0;line-height:1.5">'
+            '<strong>NO MATCH ≠ Safe.</strong> It means this URL has <em>no existing malicious record</em> in that '
+            'provider\'s database — new phishing URLs appear every minute and often have zero prior records. '
+            '<br><strong>Meaning of each status:</strong> '
+            '<span style="background:#d1fae5;padding:1px 6px;border-radius:4px;font-size:.78rem">AVAILABLE</span> = provider returned data. '
+            '<span style="background:#fef3c7;padding:1px 6px;border-radius:4px;font-size:.78rem">NO MATCH</span> = queried OK, no record found. '
+            '<span style="background:#fee2e2;padding:1px 6px;border-radius:4px;font-size:.78rem">NOT QUERIED</span> = API key not configured.'
             '</p></div>',
             unsafe_allow_html=True,
         )
-        for name in ("virustotal", "urlscan", "urlhaus", "openphish"):
-            source_card(name, result.get("providers", {}).get(name))
+
+        # Show active threat intelligence providers
+        for name in ("virustotal", "openphish"):
+            source_card(name, providers.get(name))
     with mitre_tab:
         mappings = result.get("mitre", [])
-        if not mappings: st.info("No MITRE ATT&CK mapping was generated because observed evidence did not satisfy a mapping rule.")
-        for mapping in mappings: st.markdown(f'<div class="evidence-card"><b>{html.escape(mapping.get("id", ""))} · {html.escape(mapping.get("name", ""))}</b><p>{html.escape(mapping.get("reason", ""))}</p></div>', unsafe_allow_html=True)
+        if not mappings:
+            st.info("No MITRE ATT&CK mapping was generated because observed evidence did not satisfy a mapping rule.")
+        else:
+            tactic_colors = {
+                "Initial Access": "#dc2626",
+                "Execution": "#ea580c",
+                "Defense Evasion": "#d97706",
+                "Credential Access": "#7c3aed",
+                "Resource Development": "#2563eb",
+            }
+            for mapping in mappings:
+                m_id = mapping.get("id", "")
+                m_name = mapping.get("name", "")
+                m_tactic = str(mapping.get("tactic", "Threat Behavior")).title()
+                m_reason = mapping.get("reason", "")
+                m_conf = str(mapping.get("confidence", "observed")).upper()
+                m_url = mapping.get("url") or f"https://attack.mitre.org/techniques/{m_id.replace('.', '/')}/"
+                color = tactic_colors.get(m_tactic, "#4b5563")
+
+                st.markdown(
+                    f'<div class="evidence-card" style="border-left:4px solid {color};margin-bottom:.85rem;padding:.85rem 1rem">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">'
+                    f'<span style="background:{color};color:#fff;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px">{html.escape(m_tactic.upper())}</span>'
+                    f'<span style="background:#e5e7eb;color:#374151;font-size:.7rem;font-weight:600;padding:2px 8px;border-radius:4px">{html.escape(m_conf)}</span>'
+                    f'</div>'
+                    f'<h4 style="margin:.2rem 0 .4rem;font-size:1rem">'
+                    f'<b>{html.escape(m_id)}</b> · {html.escape(m_name)} '
+                    f'<a href="{html.escape(m_url)}" target="_blank" style="font-size:.8rem;font-weight:normal">ATT&CK Matrix ↗</a>'
+                    f'</h4>'
+                    f'<p style="font-size:.84rem;margin:0;line-height:1.45;color:var(--text)">'
+                    f'<b>Detection Rationale:</b> {html.escape(m_reason)}'
+                    f'</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
     with copilot_tab:
         copilot = result.get("ai_copilot", {})
         st.markdown('<div class="evidence-card"><span class="card-kicker">EVIDENCE USED</span><ul>' + ''.join(f'<li>{html.escape(str(item))}</li>' for item in copilot.get("observed_evidence", [])) + '</ul></div>', unsafe_allow_html=True)
@@ -454,9 +745,15 @@ def render_url_evidence(result, scan_type="URL"):
     # ── Action buttons rendered OUTSIDE tabs so they appear once and do not
     #    re-render or duplicate when the user switches between tabs. ──────────
     st.divider()
-    _btn_col, _ = st.columns((1, 4))
-    _btn_col.download_button("Download Report", generate_canonical_report(scan_type, result), file_name="phishshield_security_report.txt", key=f"report-{scan_type}-{target}")
-    if _btn_col.button("Add to History", key=f"history-{target}", type="secondary"):
+    _btn_col1, _btn_col2, _ = st.columns((2, 1.5, 3.5))
+    _btn_col1.download_button(
+        "📥 Download Executive PDF Report",
+        generate_pdf_report(scan_type, result),
+        file_name=f"phishshield_audit_report_{abs(hash(str(target))) % 100000:05d}.pdf",
+        mime="application/pdf",
+        key=f"pdf-report-{scan_type}-{target}"
+    )
+    if _btn_col2.button("Add to History", key=f"history-{target}", type="secondary"):
         save_canonical_scan(scan_type, result)
         st.success("Evidence saved to scan history.")
         # Write the live scan result into session_state so the sidebar status
@@ -585,8 +882,10 @@ def render_analytics_visualizations(history) -> None:
             if not labels:
                 st.info("No classified scan categories are available yet.")
             else:
+                color_map = {"Phishing": "#a4453b", "Suspicious": "#d9a441", "Safe": "#6b8f71"}
+                pie_colors = [color_map.get(label, "#8f6559") for label in labels]
                 fig = go.Figure(go.Pie(labels=labels, values=[counts[label] for label in labels], hole=.68,
-                    marker=dict(colors={"Phishing": "#a4453b", "Suspicious": "#d9a441", "Safe": "#6b8f71"}),
+                    marker=dict(colors=pie_colors),
                     hovertemplate="%{label}: %{value}<extra></extra>"))
                 _chart_layout(fig).update_layout(annotations=[dict(text=f"<b>{sum(counts.values())}</b><br>scans", x=.5, y=.5, showarrow=False, font=dict(color="#2b2420", size=16))])
                 st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
@@ -631,6 +930,44 @@ def render_threat_dashboard() -> None:
     st.markdown('<div class="dashboard-stats">' + ''.join(
         f'<div class="stat-card {tone}"><span>{label}</span><strong>{value}</strong>' + (f'<small>{trend}</small>' if trend and label != "Model Accuracy" else "") + '</div>'
         for label, value, tone in cards) + '</div>', unsafe_allow_html=True)
+
+    # Intermediate Security Operations & Architecture Section — Warm Walnut / Mocha / Espresso Theme with spacious cards
+    st.markdown("""
+    <div class="pipeline-feature-section" style="margin: 28px 0 64px;">
+      <div style="font: 700 1.05rem 'Inter', sans-serif; color: #3d2b1f; margin-bottom: 18px; display: flex; align-items: center; gap: 8px;">
+        <span style="color: #7c5448;">◈</span> Active Security Operations & Engine Architecture
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;">
+        <div style="background: #fffdf9; border: 1px solid #ded0b8; border-top: 4px solid #7c5448; border-radius: 10px; padding: 16px 18px; min-height: 110px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 4px 16px rgba(43, 36, 32, 0.06);">
+          <div>
+            <div style="font: 700 0.94rem 'Inter', sans-serif; color: #3d2b1f; margin-bottom: 6px;">Live ML Classifier</div>
+            <div style="font-size: 0.8rem; color: #5c5148; line-height: 1.4;">25-Feature Random Forest model running real-time inference on DOM & WHOIS.</div>
+          </div>
+          <div>
+            <div style="margin-top: 12px; font-size: 0.72rem; font-weight: 700; color: #4a3728; background: #f4ede4; border: 1px solid #d8c8b8; padding: 3px 8px; border-radius: 5px; display: inline-block;">94.08% Accuracy (OpenML 4534)</div>
+          </div>
+        </div>
+        <div style="background: #fffdf9; border: 1px solid #ded0b8; border-top: 4px solid #8f6559; border-radius: 10px; padding: 16px 18px; min-height: 110px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 4px 16px rgba(43, 36, 32, 0.06);">
+          <div>
+            <div style="font: 700 0.94rem 'Inter', sans-serif; color: #3d2b1f; margin-bottom: 6px;">Multi-Vector Analysis</div>
+            <div style="font-size: 0.8rem; color: #5c5148; line-height: 1.4;">Unified engine analyzing URLs, Email header/body text, QR codes & OCR.</div>
+          </div>
+          <div>
+            <div style="margin-top: 12px; font-size: 0.72rem; font-weight: 700; color: #4a3728; background: #ebdcd0; border: 1px solid #cbb6a5; padding: 3px 8px; border-radius: 5px; display: inline-block;">4 Active Analysis Modalities</div>
+          </div>
+        </div>
+        <div style="background: #fffdf9; border: 1px solid #ded0b8; border-top: 4px solid #4a3728; border-radius: 10px; padding: 16px 18px; min-height: 110px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 4px 16px rgba(43, 36, 32, 0.06);">
+          <div>
+            <div style="font: 700 0.94rem 'Inter', sans-serif; color: #3d2b1f; margin-bottom: 6px;">Threat Intelligence</div>
+            <div style="font-size: 0.8rem; color: #5c5148; line-height: 1.4;">Real-time VirusTotal API v3 cloud submissions and OpenPhish feeds.</div>
+          </div>
+          <div>
+            <div style="margin-top: 12px; font-size: 0.72rem; font-weight: 700; color: #3d2b1f; background: #e5d5c5; border: 1px solid #bfaea0; padding: 3px 8px; border-radius: 5px; display: inline-block;">VirusTotal & OpenPhish Connected</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     render_analytics_visualizations(history)
 
@@ -695,7 +1032,6 @@ _nav_selection = st.sidebar.radio(
         "QR Analysis",
         "Screenshot Analysis",
         "History",
-        "Reports",
     ]
 )
 
@@ -704,7 +1040,6 @@ analysis_mode = {
     "Threat Intel": "Dashboard", "URL Scan": "URL Analysis",
     "Email Analysis": "Email Analysis", "QR Analysis": "QR Analysis",
     "Screenshot Analysis": "Screenshot Analysis", "History": "Scan History",
-    "Reports": "Scan History",
 }[_nav_selection]
 
 _module_style = {
@@ -712,27 +1047,15 @@ _module_style = {
     "Email Analysis": ("Email Analysis", "✉", "#c99b7a"),
     "QR Analysis": ("QR Analysis", "▦", "#a98d6b"),
     "Screenshot Analysis": ("Screenshot / OCR", "◉", "#c5b08a"),
-    "Dashboard": ("Threat Intelligence", "◈", "#8f6559"),
+    "Dashboard": ("Threat Operations", "◈", "#8f6559"),
     "Scan History": ("History & Reports", "◷", "#8f6559"),
 }[analysis_mode]
 st.markdown(f'<style>:root {{ --module-accent: {_module_style[2]}; }}</style><div class="module-marker"><span>{_module_style[1]}</span>{_module_style[0]}</div>', unsafe_allow_html=True)
 
 def _provider_statuses_for_sidebar() -> dict[str, str]:
-    """Single source of truth for sidebar System Status widget.
-
-    Priority order:
-      1. Live scan result in session_state["last_scan_result"] — set immediately
-         after every scan so the sidebar reflects the current scan, not a stale
-         history row.
-      2. Most recent persisted history row — fallback when no scan has run yet
-         this session.
-
-    This eliminates the contradiction where the sidebar showed UNAVAILABLE while
-    the Threat Intel tab showed AVAILABLE data from the same scan object.
-    """
+    """Instant cached source of truth for sidebar System Status widget."""
     defaults = {name: "UNAVAILABLE" for name in ("virustotal", "whois", "dns")}
 
-    # ── Priority 1: live result from current session ─────────────────────────
     live = st.session_state.get("last_scan_result")
     if isinstance(live, dict):
         providers = live.get("providers") or live.get("provider_evidence") or {}
@@ -746,35 +1069,14 @@ def _provider_statuses_for_sidebar() -> dict[str, str]:
             defaults["dns"] = str(dns["status"])
         return defaults
 
-    # ── Priority 2: most recent persisted history row ────────────────────────
-    history = load_history()
-    if history.empty:
-        return defaults
-    for _, row in history.iloc[::-1].iterrows():
-        raw = row.get("Provider Evidence")
-        if not isinstance(raw, str) or not raw.strip():
-            continue
-        try:
-            providers = json.loads(raw)
-        except (TypeError, ValueError):
-            continue
-        for name in ("virustotal",):
-            if isinstance(providers.get(name), dict):
-                defaults[name] = str(providers[name].get("status") or "UNAVAILABLE")
-        raw_local = row.get("Local Evidence")
-        try:
-            local = json.loads(raw_local) if isinstance(raw_local, str) else {}
-        except (TypeError, ValueError):
-            local = {}
-        if isinstance(local.get("whois"), dict):
-            defaults["whois"] = str(local["whois"].get("status") or "UNAVAILABLE")
-        if isinstance(local.get("dns"), dict):
-            defaults["dns"] = str(local["dns"].get("status") or "UNAVAILABLE")
-        break
+    if "_sidebar_statuses_cached" in st.session_state:
+        return st.session_state["_sidebar_statuses_cached"]
+
+    st.session_state["_sidebar_statuses_cached"] = defaults
     return defaults
 
 _sidebar_statuses = _provider_statuses_for_sidebar()
-_status_class = lambda value: "online" if value in {"AVAILABLE", "NO_MATCH"} else "degraded" if value in {"RATE_LIMITED", "TIMEOUT", "ERROR"} else "offline"
+_status_class = lambda value: "online" if value in {"AVAILABLE", "NO_MATCH"} else "degraded" if value in {"RATE_LIMITED", "TIMEOUT", "ERROR", "PENDING"} else "offline"
 st.sidebar.markdown(
     '<div class="system-status"><div class="system-status-title">SYSTEM STATUS</div>'
     + ''.join(f'<div class="system-status-row"><span class="status-dot {_status_class(_sidebar_statuses[name])}"></span>{label}<span>{_sidebar_statuses[name]}</span></div>'
@@ -782,8 +1084,12 @@ st.sidebar.markdown(
     + '</div>', unsafe_allow_html=True)
 
 if analysis_mode == "Dashboard":
-    st.header("Threat Intelligence Console")
-    st.caption("Live operational posture based on recorded canonical scan evidence.")
+    st.markdown("""
+    <div style="margin-top: 4px; margin-bottom: 6px;">
+        <h2 style="font-size: 1.6rem !important; font-weight: 850 !important; margin: 0 0 2px 0 !important; color: #2b2420 !important; line-height: 1.2 !important;">Threat Intelligence Console</h2>
+        <div style="font-size: 0.84rem; color: #5c5148; margin: 0 !important; padding: 0 !important;">Live operational posture based on recorded canonical scan evidence.</div>
+    </div>
+    """, unsafe_allow_html=True)
     render_threat_dashboard()
     st.stop()
 
@@ -858,25 +1164,31 @@ if analysis_mode == "QR Analysis":
             )
 
         else:
+            st.success("QR Code Detected")
+            st.write(f"Embedded Content: {extracted_url}")
 
-            st.success(
-                "QR Code Detected"
-            )
+            from urllib.parse import unquote
+            unquoted_content = unquote(str(extracted_url))
+            target_url = None
 
-            st.write(
-                f"Embedded Content: {extracted_url}"
-            )
+            if validate_url(extracted_url):
+                target_url = extracted_url
+            else:
+                found_urls = extract_urls(unquoted_content)
+                if found_urls:
+                    target_url = found_urls[0]
+                    st.warning(f"🔗 <b>EXTRACTED EMBEDDED LINK:</b> Found URL <code>{html.escape(target_url)}</code> embedded inside QR text payload.")
 
-            if not validate_url(extracted_url):
-                st.info("The QR code contains non-URL content; URL phishing analysis was not run.")
-                save_scan("QR", extracted_url, "Non-URL content", 0, risk_level="NOT_APPLICABLE",
-                          evidence="QR decoded successfully, but its content is not a URL.")
+            if not target_url:
+                st.info("The QR code contains text content without any embedded web links.")
+                save_scan("QR", str(extracted_url), "Non-URL content", 0, risk_level="NOT_APPLICABLE",
+                          evidence="QR decoded successfully, but its content contains no web URLs.")
                 st.stop()
 
-            if not extracted_url.startswith(("http://", "https://")):
-                extracted_url = "https://" + extracted_url
+            if not target_url.startswith(("http://", "https://")):
+                target_url = "https://" + target_url
 
-            complete_url_result = run_complete_url_analysis(extracted_url)
+            complete_url_result = run_complete_url_analysis(target_url)
             save_canonical_scan("QR", complete_url_result)
             st.session_state["last_scan_result"] = complete_url_result
             render_url_evidence(complete_url_result, scan_type="QR")
@@ -919,19 +1231,22 @@ if analysis_mode == "Screenshot Analysis":
             file_path
         )
 
-        st.image(
-            uploaded_file,
-            use_container_width=True
-        )
+        _img_col, _ = st.columns((2.5, 2.5))
+        with _img_col:
+            st.image(
+                uploaded_file,
+                width=360,
+                caption="Uploaded Screenshot Preview"
+            )
 
         st.subheader(
-            "📄 Extracted Text"
+            "📄 Extracted Text (OCR)"
         )
 
         st.text_area(
             "",
             result["text"],
-            height=200
+            height=160
         )
 
         st.subheader(
@@ -976,17 +1291,18 @@ if analysis_mode == "Screenshot Analysis":
             )
 
         if result["found_urls"]:
-            st.subheader("URL Intelligence from Screenshot")
+            st.subheader(f"🔍 Screenshot Embedded URL Analysis ({len(result['found_urls'])} Targets Identified)")
             screenshot_url_results = analyze_extracted_urls(result["found_urls"])
             for complete_url_result in screenshot_url_results:
                 save_canonical_scan("Screenshot URL", complete_url_result)
-                url_result = complete_url_result["model"]
-                st.code(complete_url_result.get("normalized_url") or complete_url_result["url"])
-                if not url_result.get("model_available", False):
-                    st.warning(url_result.get("error") or "30-feature URL model unavailable for this URL.")
-                else:
-                    verdict = "Phishing" if url_result["prediction"] == 1 else "Legitimate"
-                    st.write(f"30-feature URL model: {verdict} ({url_result['confidence']}% phishing probability)")
+                target_url_str = complete_url_result.get("normalized_url") or complete_url_result["url"]
+                st.markdown(
+                    f'<div style="margin:16px 0 10px;padding:10px 14px;background:#f4ede4;border:1px solid #ded0b8;border-left:4px solid #7c5448;border-radius:6px">'
+                    f'<span style="font-size:0.75rem;font-weight:700;letter-spacing:0.08em;color:#7c5448;text-transform:uppercase">EXTRACTED SCREENSHOT LINK</span>'
+                    f'<div style="font:700 0.95rem \'JetBrains Mono\',monospace;color:#3d2b1f;margin-top:2px;word-break:break-all">{html.escape(target_url_str)}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
                 render_url_evidence(complete_url_result)
         else:
             screenshot_url_results = []
@@ -996,15 +1312,6 @@ if analysis_mode == "Screenshot Analysis":
             uploaded_file.name,
             result["verdict"],
             result["risk"]
-        )
-
-        report = generate_input_report("Screenshot", uploaded_file.name,
-            {"ocr_indicators": result["indicators"], "extracted_urls": result["found_urls"]}, screenshot_url_results)
-
-        st.download_button(
-            "📥 Download Screenshot Report",
-            report,
-            file_name="screenshot_report.txt"
         )
 
     st.stop()
@@ -1021,21 +1328,45 @@ if analysis_mode == "Email Analysis":
     )
 
     if st.button("Analyze Email"):
-
         if not email_text.strip():
-
-            st.warning(
-                "Please paste email content."
-            )
-
+            st.warning("Please paste email content.")
             st.stop()
 
-        result = analyze_email_content(
-            email_text
-        )
+        progress_slot = st.empty()
+        render_scan_progress_step(progress_slot, 50, "🔍 Analysing Email Text & Extracted Links...", "Scanning email headers, phishing indicators & extracting embedded target URLs...")
+        result = analyze_email_content(email_text)
+        urls = extract_urls(email_text)
+
+        # Analyze extracted URLs FIRST so embedded link threat levels can influence the final email verdict
+        email_url_results = []
+        highest_url_risk = 0
+        phishing_url_found = False
+        phishing_url_target = ""
+
+        if urls:
+            email_url_results = analyze_extracted_urls(urls)
+            for complete_url_result in email_url_results:
+                u_verdict = str(complete_url_result.get("verdict", "UNKNOWN")).upper()
+                u_risk = int(complete_url_result.get("risk", 0))
+                if u_risk > highest_url_risk:
+                    highest_url_risk = u_risk
+                if u_verdict in ("LIKELY_PHISHING", "CONFIRMED_MALICIOUS") or u_risk >= 50:
+                    phishing_url_found = True
+                    phishing_url_target = complete_url_result.get("normalized_url") or complete_url_result.get("url")
+
+        progress_slot.empty()
 
         prediction = result["prediction"]
         confidence = result["confidence"]
+        url_override = False
+
+        # If an embedded URL is a phishing hazard, OVERRIDE email verdict to PHISHING
+        if phishing_url_found:
+            prediction = 1
+            confidence = max(confidence or 0, highest_url_risk)
+            url_override = True
+            if not any("Contains confirmed phishing URL" in str(r) for r in result["reasons"]):
+                result["reasons"].insert(0, f"CRITICAL HAZARD: Contains confirmed phishing URL ('{phishing_url_target}')")
 
         if not result.get("model_available", False):
             st.warning(result.get("error") or "Email ML is unavailable; no email prediction was generated.")
@@ -1056,13 +1387,12 @@ if analysis_mode == "Email Analysis":
         )
 
         if prediction == 1:
-
             st.error(
-                f"⚠️ Phishing Email Detected ({confidence}%)"
+                f"⚠️ Phishing Email Detected ({confidence}% Risk)"
             )
-
+            if url_override:
+                st.warning(f"🛡️ <b>EMBEDDED LINK HAZARD OVERRIDE:</b> Although the email text body appeared neutral, an embedded link in this email (<code>{html.escape(phishing_url_target)}</code>) was identified as a <b>Phishing Hazard</b>. The overall email verdict has been upgraded to <b>Phishing Email</b>.")
         elif prediction == 0:
-
             st.success(
                 f"✅ Legitimate Email ({confidence}%)"
             )
@@ -1083,23 +1413,11 @@ if analysis_mode == "Email Analysis":
             "🔗 URLs Found"
         )
 
-        urls = extract_urls(
-            email_text
-        )
-
         if urls:
-
             for detected_url in urls:
-
-                st.code(
-                    detected_url
-                )
-
+                st.code(detected_url)
         else:
-
-            st.write(
-                "No URLs detected."
-            )
+            st.write("No URLs detected.")
 
         st.divider()
 
@@ -1107,42 +1425,20 @@ if analysis_mode == "Email Analysis":
             "🔍 Embedded URL Analysis"
         )
 
-        email_url_results = []
-        if urls:
-            email_url_results = analyze_extracted_urls(urls)
-            for complete_url_result in email_url_results:
-
-                st.write(
-                    f"Analyzing: {complete_url_result.get('normalized_url') or complete_url_result['url']}"
+        if email_url_results:
+            for i, complete_url_result in enumerate(email_url_results, 1):
+                target_url_str = complete_url_result.get('normalized_url') or complete_url_result['url']
+                st.markdown(
+                    f'<div style="margin:20px 0 12px;padding:12px 16px;background:#f4ede4;border:1px solid #ded0b8;border-left:4px solid #7c5448;border-radius:8px">'
+                    f'<span style="font-size:0.75rem;font-weight:700;letter-spacing:0.08em;color:#7c5448;text-transform:uppercase">EXTRACTED LINK TARGET #{i}</span>'
+                    f'<div style="font:700 0.98rem \'JetBrains Mono\',monospace;color:#3d2b1f;margin-top:4px;word-break:break-all">{html.escape(target_url_str)}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
                 )
                 save_canonical_scan("Email URL", complete_url_result)
-                url_result = complete_url_result["model"]
                 render_url_evidence(complete_url_result)
-                if not url_result.get("model_available", False):
-                    st.warning(url_result.get("error") or "URL ML result unavailable; displayed enrichment is still real evidence.")
-                elif url_result["prediction"] == 1:
-                    st.error(
-                        "⚠️ Suspicious URL Detected"
-                    )
-                elif url_result["prediction"] == 0:
-                    st.success(
-                        "✅ URL Appears Safe"
-                    )
-                _tls = complete_url_result.get("tls") or {}
-                _ssl_str = "enabled" if _tls.get("https") and _tls.get("connected") else "disabled" if _tls.get("connected") else "unavailable"
-                _vt = complete_url_result.get("virustotal") or {}
-                _vt_str = _vt.get("verdict") or _vt.get("status") or "unavailable"
-                st.caption(
-                    f"Brand: {complete_url_result.get('brand', 'Unknown')} · "
-                    f"SSL: {_ssl_str} · "
-                    f"VirusTotal: {_vt_str}"
-                )
-
         else:
-
-            st.write(
-                "No URLs available for analysis."
-            )
+            st.info("No URLs detected in the email body content for link-level analysis.")
 
         st.divider()
 
@@ -1151,25 +1447,17 @@ if analysis_mode == "Email Analysis":
         )
 
         if result["reasons"]:
-
-            # Keyword reasons alag group karo
             keyword_reasons = [r for r in result["reasons"] if r.startswith("Contains phishing keyword:")]
             other_reasons   = [r for r in result["reasons"] if not r.startswith("Contains phishing keyword:")]
 
-            # Keywords ek hi line mein dikhao
             if keyword_reasons:
                 keywords_found = [r.replace("Contains phishing keyword: ", "").strip("'") for r in keyword_reasons]
                 st.write("• Phishing keywords found:", ", ".join(f"`{k}`" for k in keywords_found))
 
-            # Baaki reasons alag alag
             for reason in other_reasons:
                 st.write("•", reason)
-
         else:
-
-            st.write(
-                "No suspicious indicators found."
-            )
+            st.write("No suspicious indicators found.")
 
         st.divider()
 
@@ -1199,25 +1487,15 @@ URLs Found:
         )
 
         if prediction == 1:
-
             st.error(
-                "Do not click links or provide credentials from this email."
+                "🚨 HIGH THREAT HAZARD: Do NOT click links or provide credentials from this email. Embedded phishing URLs detected."
             )
-
         elif prediction == 0:
-
             st.success(
-                "Email appears legitimate according to the detection system."
+                "Email and embedded URLs appear legitimate according to the multi-factor detection system."
             )
 
-        report = generate_input_report("Email", "Email Analysis",
-            {"email_content_model_available": result.get("model_available"), "content_reasons": result["reasons"], "extracted_urls": urls}, email_url_results)
-
-        st.download_button(
-            "📥 Download Email Security Report",
-            report,
-            file_name="email_security_report.txt"
-        )
+        pass
 
 
 # =====================================================
@@ -1241,19 +1519,20 @@ elif analysis_mode == "URL Analysis":
     analyze_clicked = st.button("Analyze URL", key="btn_analyze_url")
 
     if analyze_clicked:
-
         if not url_to_analyze:
-
-            st.warning(
-                "Please enter a URL."
-            )
-
+            st.warning("Please enter a URL.")
             st.stop()
 
+        progress_slot = st.empty()
+        render_scan_progress_step(progress_slot, 45, "🔍 Analysing & Evaluating...", "Inspecting URL structure, SSL/TLS certificate, DNS records & WHOIS age...")
         complete_url_result = run_complete_url_analysis(url_to_analyze)
+        save_canonical_scan("URL", complete_url_result)
         st.session_state["url_analysis_result"] = complete_url_result
         st.session_state["url_analysis_target"] = url_to_analyze
         st.session_state["last_scan_result"] = complete_url_result
+        progress_slot.empty()
+        render_url_evidence(complete_url_result, scan_type="URL")
+        st.stop()
 
     if "url_analysis_result" in st.session_state and st.session_state.get("url_analysis_target") == url_to_analyze and url_to_analyze:
         render_url_evidence(st.session_state["url_analysis_result"], scan_type="URL")

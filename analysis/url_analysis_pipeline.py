@@ -11,7 +11,7 @@ from ai_copilot import generate_ai_explanation
 from analysis.risk_engine import calculate_verdict
 from brand_detector import _is_authoritative, detect_brand
 from dns_intelligence import analyze_dns
-from intelligence.contracts import result, ERROR, UNAVAILABLE
+from intelligence.contracts import result, ERROR, UNAVAILABLE, NOT_QUERIED
 from intelligence.provider_manager import collect_remote
 from intelligence.diagnostics import log_scan_stage
 from mitre_mapper import map_to_mitre
@@ -23,9 +23,9 @@ from url_expander import ExpansionStatus, expand_url
 from website_analyzer import analyze_website
 from whois_checker import check_domain_age
 
-SOURCE_TIMEOUT = 10.0
+SOURCE_TIMEOUT = 2.5
 CANONICAL_VERDICTS = {"CONFIRMED_MALICIOUS", "LIKELY_PHISHING", "SUSPICIOUS", "LIKELY_LEGITIMATE", "INSUFFICIENT_EVIDENCE"}
-PROVIDER_NAMES = ("virustotal", "urlscan", "urlhaus", "openphish")
+PROVIDER_NAMES = ("virustotal", "openphish")
 
 # ── Suspicious TLDs used by phishing infrastructure ──────────────────────────
 _SUSPICIOUS_TLDS = {
@@ -199,7 +199,7 @@ def normalize_analysis_result(raw: dict) -> dict:
     providers = normalized.get("provider_evidence", normalized.get("providers"))
     providers = dict(providers) if isinstance(providers, dict) else {}
     for name in PROVIDER_NAMES:
-        providers.setdefault(name, result(name, UNAVAILABLE, reason="Provider did not return a result"))
+        providers.setdefault(name, result(name, NOT_QUERIED, reason="Provider not queried for this URL target", malicious=None))
 
     verdict_source = normalized.get(
         "verdict_source",
@@ -320,60 +320,77 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
     try:
         normalized = normalise_url(analysis_url)
     except UnsafeURLError as error:
-        log_scan_stage("validation_blocked", input_url=analysis_url, rule=str(error), remote_providers_called=False)
+        err_msg = str(error).lower()
+        is_internal_ssrf = any(kw in err_msg for kw in ("private", "loopback", "reserved", "localhost", "link-local", "scheme", "malformed", "credentials"))
+        if is_internal_ssrf:
+            log_scan_stage("validation_blocked", input_url=analysis_url, rule=str(error), remote_providers_called=False)
 
-        # Run network-independent lexical/typosquat analysis so the verdict is
-        # meaningful even when the URL cannot be reached for live checks.
-        lex_verdict, lex_risk, lex_strength, lex_reasons = _lexical_risk_assessment(analysis_url)
-        lex_reasons_all = [f"Live network checks skipped ({error})"] + lex_reasons
-        if expansion_note:
-            lex_reasons_all.insert(0, expansion_note)
+            lex_verdict, lex_risk, lex_strength, lex_reasons = _lexical_risk_assessment(analysis_url)
+            lex_reasons_all = [f"URL blocked by SSRF protection ({error})"] + lex_reasons
+            if expansion_note:
+                lex_reasons_all.insert(0, expansion_note)
 
-        brand_fallback, sim_fallback = detect_brand(
-            f"https://{(urlparse('https://' + analysis_url.lstrip('https://').lstrip('http://')).hostname or analysis_url)}/"
-        )
+            brand_fallback, sim_fallback = detect_brand(
+                f"https://{(urlparse('https://' + analysis_url.lstrip('https://').lstrip('http://')).hostname or analysis_url)}/"
+            )
 
-        # For private IP / loopback SSRF blocks, omit ML model. For external domain names, run ML model.
-        is_private_ip_ssrf = "private" in str(error).lower() or "loopback" in str(error).lower() or "reserved" in str(error).lower()
-        if is_private_ip_ssrf:
             lex_model = {"model_available": False, "prediction": None, "confidence": None, "error": f"URL blocked by SSRF protection: {error}"}
+            model_avail = False
+
+            offline_providers = {
+                name: {
+                    "provider": name,
+                    "status": "NOT_QUERIED",
+                    "malicious": None,
+                    "strong": False,
+                    "reason": f"Not queried: Target blocked by security policy ({error}).",
+                    "evidence": None,
+                }
+                for name in ("virustotal", "openphish")
+            }
+
+            blocked = {
+                "url": url,
+                "normalized_url": analysis_url,
+                "verdict": lex_verdict, "risk": lex_risk,
+                "confidence_strength": lex_strength,
+                "reasons": lex_reasons_all,
+                "redirect_chain": redirect_chain,
+                "providers": offline_providers,
+                "provider_statuses": {name: "NOT_QUERIED" for name in offline_providers},
+                "model": lex_model, "model_available": model_avail,
+                "prediction": lex_model.get("prediction"),
+                "website": {"status": "AVAILABLE", "reachable": False, "notes": "Target blocked by SSRF security policy"},
+                "tls": {"status": "AVAILABLE", "connected": False, "notes": "TLS check skipped for blocked target"},
+                "dns": {"status": "AVAILABLE", "notes": "DNS resolution blocked by SSRF policy"},
+                "whois": {"status": "AVAILABLE", "verdict": "WHOIS lookup skipped for blocked target"},
+                "brand": brand_fallback, "similarity": sim_fallback,
+                "mitre": map_to_mitre(analysis_url, sim_fallback, lex_risk, lex_reasons_all, {"reachable": False}),
+                "verdict_source": "Rule-Based Security Policy",
+                "ai_copilot": generate_ai_explanation(
+                    analysis_url, lex_verdict, lex_risk, lex_reasons_all, brand_fallback, model_available=model_avail
+                ),
+            }
+            blocked.update({
+                "final_verdict": lex_verdict, "risk_score": lex_risk,
+                "evidence_strength": lex_strength, "verdict_reason": lex_reasons_all,
+                "provider_evidence": blocked["providers"],
+                "dns_evidence": blocked["dns"], "tls_evidence": blocked["tls"], "whois_rdap_evidence": blocked["whois"],
+                "website_evidence": blocked["website"], "mitre_mappings": blocked["mitre"],
+                "brand_evidence": {"brand": brand_fallback, "similarity": sim_fallback},
+                "copilot_explanation": blocked["ai_copilot"],
+                "legacy_model": blocked["model"],
+            })
+            return normalize_analysis_result(blocked)
         else:
-            lex_model = predict_url(analysis_url)
-
-        model_avail = lex_model.get("model_available", False)
-
-        blocked = {
-            "url": url,
-            "normalized_url": analysis_url,
-            "verdict": lex_verdict, "risk": lex_risk,
-            "confidence_strength": lex_strength,
-            "reasons": lex_reasons_all,
-            "redirect_chain": redirect_chain,
-            "providers": {}, "provider_statuses": {},
-            "model": lex_model, "model_available": model_avail,
-            "prediction": lex_model.get("prediction"),
-            "website": {"status": "AVAILABLE", "reachable": False, "notes": "Target host unreachable / DNS resolution skipped"},
-            "tls": {"status": "AVAILABLE", "connected": False, "notes": "TLS check skipped for offline host"},
-            "dns": {"status": "AVAILABLE", "notes": "Host DNS resolution failed"},
-            "whois": {"status": "AVAILABLE", "verdict": "WHOIS lookup skipped for offline host"},
-            "brand": brand_fallback, "similarity": sim_fallback,
-            "mitre": map_to_mitre(analysis_url, sim_fallback, lex_risk, lex_reasons_all, {"reachable": False}),
-            "verdict_source": "AI/ML Model & Rule-Based Analysis" if model_avail else "Rule-Based Heuristics & Threat Intelligence",
-            "ai_copilot": generate_ai_explanation(
-                analysis_url, lex_verdict, lex_risk, lex_reasons_all, brand_fallback, model_available=model_avail
-            ),
-        }
-        blocked.update({
-            "final_verdict": lex_verdict, "risk_score": lex_risk,
-            "evidence_strength": lex_strength, "verdict_reason": lex_reasons_all,
-            "provider_evidence": blocked["providers"],
-            "dns_evidence": blocked["dns"], "tls_evidence": blocked["tls"], "whois_rdap_evidence": blocked["whois"],
-            "website_evidence": blocked["website"], "mitre_mappings": blocked["mitre"],
-            "brand_evidence": {"brand": brand_fallback, "similarity": sim_fallback},
-            "copilot_explanation": blocked["ai_copilot"],
-            "legacy_model": blocked["model"],
-        })
-        return normalize_analysis_result(blocked)
+            # Public domain whose local DNS lookup failed — prepend scheme if missing and proceed to full analysis
+            # so remote threat-intelligence providers (VirusTotal, OpenPhish) ARE STILL QUERIED!
+            if "://" in analysis_url:
+                normalized = analysis_url
+            elif analysis_url.lower().startswith("www."):
+                normalized = "https://" + analysis_url
+            else:
+                normalized = "https://" + analysis_url
     log_scan_stage("validation_passed", input_url=analysis_url, normalized_url=normalized)
 
     # ── Stage 2: parallel enrichment ─────────────────────────────────────────
@@ -385,43 +402,53 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
     except Exception as error:
         values["model"] = {"model_available": False, "prediction": None, "error": str(error)}
 
-    jobs = {"website": analyze_website, "tls": inspect_tls, "dns": analyze_dns, "remote": collect_remote}
+    # Run remote threat intelligence (VirusTotal & OpenPhish) in dedicated pool so local socket delays never block API calls
+    remote_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="remote_intel")
+    remote_future = remote_pool.submit(collect_remote, normalized)
+
+    jobs = {"website": analyze_website, "tls": inspect_tls, "dns": analyze_dns}
     if include_enrichment: jobs["whois"] = check_domain_age
     log_scan_stage("pipeline_jobs_submitted", normalized_url=normalized,
-                   jobs=list(jobs.keys()), timeout_s=SOURCE_TIMEOUT)
+                   jobs=["remote"] + list(jobs.keys()), timeout_s=SOURCE_TIMEOUT)
     pool = ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="phishshield")
     try:
         futures = {name: pool.submit(fn, normalized) for name, fn in jobs.items()}
-        wait(list(futures.values()), timeout=SOURCE_TIMEOUT)
+        wait(list(futures.values()), timeout=2.0)
         for name, future in futures.items():
             if not future.done():
-                values[name], durations[name] = _unavailable(name, "pipeline timeout"), SOURCE_TIMEOUT
+                values[name], durations[name] = _unavailable(name, "pipeline timeout"), 2.0
                 log_scan_stage("job_timeout", job=name, normalized_url=normalized)
             else:
                 try:
                     values[name] = future.result()
                     durations[name] = round(time.perf_counter() - started, 3)
-                    # Log a concise trace per completed job (no secrets; status only for remote)
-                    if name == "remote":
-                        _remote_statuses = {
-                            k: v.get("status") if isinstance(v, dict) else "malformed"
-                            for k, v in (values[name] or {}).items()
-                        }
-                        log_scan_stage("job_complete", job=name, elapsed_s=durations[name],
-                                       provider_statuses=_remote_statuses)
-                    else:
-                        log_scan_stage("job_complete", job=name, elapsed_s=durations[name])
+                    log_scan_stage("job_complete", job=name, elapsed_s=durations[name])
                 except Exception as error:
                     values[name], durations[name] = _unavailable(name, str(error)), round(time.perf_counter() - started, 3)
                     log_scan_stage("job_error", job=name, error=str(error), elapsed_s=durations[name])
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
+    # Collect remote threat intel result (collect_remote manages its own bounded 6.0s timeout internally)
+    try:
+        values["remote"] = remote_future.result()
+        durations["remote"] = round(time.perf_counter() - started, 3)
+        _remote_statuses = {
+            k: v.get("status") if isinstance(v, dict) else "malformed"
+            for k, v in (values["remote"] or {}).items()
+        }
+        log_scan_stage("job_complete", job="remote", elapsed_s=durations["remote"], provider_statuses=_remote_statuses)
+    except Exception as error:
+        values["remote"] = _unavailable("remote", str(error))
+        log_scan_stage("job_error", job="remote", error=str(error), elapsed_s=round(time.perf_counter() - started, 3))
+    finally:
+        remote_pool.shutdown(wait=False, cancel_futures=True)
+
     # ── Stage 3: assemble provider evidence ──────────────────────────────────
     remote_value = values.get("remote", {})
     remote = remote_value if isinstance(remote_value, dict) else {}
 
-    provider_names = ("virustotal", "urlscan", "urlhaus", "openphish")
+    provider_names = ("virustotal", "openphish")
     fallback_reason = (remote_value.get("reason") if isinstance(remote_value, dict) else None) or "Provider did not return a result"
     providers = {}
     for name in provider_names:

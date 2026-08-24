@@ -26,7 +26,7 @@ if not LOGGER.handlers and not logging.root.handlers:
     LOGGER.addHandler(_handler)
     LOGGER.setLevel(logging.DEBUG)
 
-KEY_NAMES = ("VIRUSTOTAL_API_KEY", "URLSCAN_API_KEY", "URLHAUS_AUTH_KEY")
+KEY_NAMES = ("VIRUSTOTAL_API_KEY",)
 _startup_reported = False
 
 
