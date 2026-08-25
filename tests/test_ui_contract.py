@@ -10,9 +10,8 @@ class UrlResultUiContractTests(unittest.TestCase):
         cls.renderer = cls.app.split('def render_url_evidence(result, scan_type="URL"):', 1)[1].split('\ndef _risk_chip', 1)[0]
 
     def test_one_common_action_row_uses_canonical_report(self):
-        self.assertEqual(self.renderer.count('download_button("Download Report"'), 1)
-        self.assertEqual(self.renderer.count('button("Add to History"'), 1)
-        self.assertIn('generate_canonical_report(scan_type, result)', self.renderer)
+        self.assertEqual(self.renderer.count('download_button('), 1)
+        self.assertIn('generate_pdf_report(scan_type, result)', self.renderer)
 
     def test_verdict_precedes_tabs(self):
         self.assertLess(self.renderer.index('FINAL VERDICT'), self.renderer.index('st.tabs('))

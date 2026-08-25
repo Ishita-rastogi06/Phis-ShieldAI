@@ -82,7 +82,8 @@ def calculate_verdict(*, providers: dict, brand_similarity: int, trusted_domain:
     # Strong consensus is handled above; two-engine consensus remains
     # suspicious below. Other provider hits keep their own adverse semantics.
     vt_malicious = int(vt.get("malicious", 0) or 0)
-    adverse = brand_similarity >= 65 or vt_malicious >= 2 or any(
+    is_impersonation = (brand_similarity >= 65 and not trusted_domain)
+    adverse = is_impersonation or vt_malicious >= 2 or any(
         item.get("malicious") for name, item in providers.items() if name != "virustotal"
     )
     if positive_inspection and not adverse:
