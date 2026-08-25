@@ -54,6 +54,7 @@ If a required live source is unreachable, the app reports that source as **unava
 | Data Handling | pandas, NumPy |
 | Charts | Plotly |
 | Web / Network | requests, BeautifulSoup4, dnspython, python-whois, tldextract |
+| Brand Impersonation | RapidFuzz (fuzzy string matching algorithm) |
 | QR Decoding | ZXing-C++, PyZbar, OpenCV (fallback chain) |
 | Screenshot OCR | EasyOCR (PyTorch backend) |
 | PDF Reports | ReportLab |
