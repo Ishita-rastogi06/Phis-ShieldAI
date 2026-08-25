@@ -233,8 +233,10 @@ def normalize_analysis_result(raw: dict) -> dict:
     return normalized
 
 
-def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
+def analyze_url(url: str, *, include_enrichment: bool = True, progress_callback: Any = None) -> dict:
     started = time.perf_counter()
+    if progress_callback:
+        progress_callback(15, "Validating Target & Redirect Chain", "Resolving URL shorteners, redirect hops, and SSRF security policies...")
     log_scan_stage("received", input_url=url, include_enrichment=include_enrichment)
 
     # ── Stage 0: URL shortener / redirect expansion ───────────────────────────
@@ -392,6 +394,8 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
             else:
                 normalized = "https://" + analysis_url
     log_scan_stage("validation_passed", input_url=analysis_url, normalized_url=normalized)
+    if progress_callback:
+        progress_callback(35, "Running 25-Feature ML Classifier", "Extracting structural, lexical, and DOM telemetry features...")
 
     # ── Stage 2: parallel enrichment ─────────────────────────────────────────
     values, durations = {}, {}
@@ -401,6 +405,9 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
         durations["model"] = round(time.perf_counter() - started, 3)
     except Exception as error:
         values["model"] = {"model_available": False, "prediction": None, "error": str(error)}
+
+    if progress_callback:
+        progress_callback(60, "Querying DNS, TLS & Domain WHOIS", "Inspecting SSL certificates, DNS resolution, and domain age...")
 
     # Run remote threat intelligence (VirusTotal & OpenPhish) in dedicated pool so local socket delays never block API calls
     remote_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="remote_intel")
@@ -429,6 +436,9 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
+    if progress_callback:
+        progress_callback(85, "Evaluating VirusTotal & Threat Feeds", "Corroborating threat feeds, IP reputation, and brand similarity...")
+
     # Collect remote threat intel result (collect_remote manages its own bounded 6.0s timeout internally)
     try:
         values["remote"] = remote_future.result()
@@ -443,6 +453,9 @@ def analyze_url(url: str, *, include_enrichment: bool = True) -> dict:
         log_scan_stage("job_error", job="remote", error=str(error), elapsed_s=round(time.perf_counter() - started, 3))
     finally:
         remote_pool.shutdown(wait=False, cancel_futures=True)
+
+    if progress_callback:
+        progress_callback(95, "Synthesizing Evidence & MITRE ATT&CK", "Generating threat decision matrix and security indicators...")
 
     # ── Stage 3: assemble provider evidence ──────────────────────────────────
     remote_value = values.get("remote", {})

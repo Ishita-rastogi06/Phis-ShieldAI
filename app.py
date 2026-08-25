@@ -5,6 +5,7 @@ socket.setdefaulttimeout(2.0)
 import tempfile
 import json
 import time
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 import html
@@ -177,15 +178,17 @@ def evidence_card(title, data, *, hide_keys=()):
 
 def render_scan_progress_step(slot, pct: int, title: str, detail: str):
     """Render an active, living status bar on screen that stays visible while backend analysis executes."""
+    clean_title = re.sub(r'[\U00010000-\U0010ffff\u2600-\u27ff\u2300-\u23ff]', '', title).strip()
+    clean_detail = re.sub(r'[\U00010000-\U0010ffff\u2600-\u27ff\u2300-\u23ff]', '', detail).strip()
     slot.markdown(
         f'<div style="margin: 16px 0 24px; padding: 14px 18px; background: #fffdf9; border: 1.5px solid #ded0b8; border-left: 5px solid #7c5448; border-radius: 10px; box-shadow: 0 4px 14px rgba(43,36,32,0.06);">'
         f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">'
-        f'<span style="font: 800 0.98rem \'Inter\', sans-serif; color: #3d2b1f;">{title}</span>'
+        f'<span style="font: 800 0.98rem \'Inter\', sans-serif; color: #3d2b1f;">{clean_title}</span>'
         f'<span style="font: 700 0.85rem \'Inter\', sans-serif; color: #7c5448; background: #f4ede4; padding: 2px 8px; border-radius: 4px;">{pct}%</span>'
         f'</div>'
-        f'<div style="font-size: 0.82rem; color: #5c5148; margin-bottom: 8px;">{detail}</div>'
+        f'<div style="font-size: 0.82rem; color: #5c5148; margin-bottom: 8px;">{clean_detail}</div>'
         f'<div style="height: 7px; background: #efe6dc; border-radius: 999px; overflow: hidden;">'
-        f'<div style="height: 100%; width: {pct}%; background: linear-gradient(90deg, #b28574, #7c5448); border-radius: inherit; transition: width 0.2s ease;"></div>'
+        f'<div style="height: 100%; width: {pct}%; background: linear-gradient(90deg, #b28574, #7c5448); border-radius: inherit; transition: width 0.3s ease;"></div>'
         f'</div>'
         f'</div>',
         unsafe_allow_html=True
@@ -1328,7 +1331,7 @@ if analysis_mode == "Email Analysis":
             st.stop()
 
         progress_slot = st.empty()
-        render_scan_progress_step(progress_slot, 50, "🔍 Analysing Email Text & Extracted Links...", "Scanning email headers, phishing indicators & extracting embedded target URLs...")
+        render_scan_progress_step(progress_slot, 50, "Analysing Email Text & Extracted Links...", "Scanning email headers, phishing indicators & extracting embedded target URLs...")
         result = analyze_email_content(email_text)
         urls = extract_urls(email_text)
 
@@ -1519,8 +1522,11 @@ elif analysis_mode == "URL Analysis":
             st.stop()
 
         progress_slot = st.empty()
-        render_scan_progress_step(progress_slot, 45, "🔍 Analysing & Evaluating...", "Inspecting URL structure, SSL/TLS certificate, DNS records & WHOIS age...")
-        complete_url_result = run_complete_url_analysis(url_to_analyze)
+
+        def _on_progress(pct: int, title: str, detail: str):
+            render_scan_progress_step(progress_slot, pct, title, detail)
+
+        complete_url_result = run_complete_url_analysis(url_to_analyze, progress_callback=_on_progress)
         save_canonical_scan("URL", complete_url_result)
         st.session_state["url_analysis_result"] = complete_url_result
         st.session_state["url_analysis_target"] = url_to_analyze

@@ -11,6 +11,10 @@ _EXTRACT = offline_extractor()
 BRAND_DOMAINS = {
     "amazon": {"amazon.com", "amazon.in", "amazonaws.com", "amazon"}, "google": {"google.com", "gmail.com", "google"},
     "microsoft": {"microsoft.com", "live.com", "office.com", "microsoft"}, "apple": {"apple.com", "icloud.com", "apple"},
+    "flipkart": {"flipkart.com", "flipkart.in", "flipkart"}, "paytm": {"paytm.com", "paytm.in", "paytm"},
+    "myntra": {"myntra.com", "myntra"}, "swiggy": {"swiggy.com", "swiggy.in", "swiggy"},
+    "zomato": {"zomato.com", "zomato.in", "zomato"}, "meesho": {"meesho.com", "meesho"},
+    "jio": {"jio.com", "jiomart.com", "jio"}, "airtel": {"airtel.in", "airtel.com", "airtel"},
     "paypal": {"paypal.com"}, "netflix": {"netflix.com"}, "github": {"github.com"},
     "facebook": {"facebook.com", "instagram.com", "meta.com"}, "stripe": {"stripe.com"},
     "linkedin": {"linkedin.com"}, "sbi": {"sbi.co.in"}, "hdfc": {"hdfcbank.com"},
