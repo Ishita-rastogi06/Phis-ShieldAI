@@ -615,10 +615,10 @@ def render_url_evidence(result, scan_type="URL"):
         dns = result.get("dns", {})
         whois = result.get("whois", {})
 
-        dns_notes = dns.get("notes") or "DNS resolution completed"
-        ips = dns.get("ip_addresses") or dns.get("ips") or []
+        dns_notes = dns.get("notes") or dns.get("error") or "DNS resolution completed"
+        ips = dns.get("ip_addresses") or dns.get("ips") or (dns.get("a_records", []) + dns.get("aaaa_records", []))
         mx_records = dns.get("mx_records") or []
-        ns_records = dns.get("nameservers") or []
+        ns_records = dns.get("nameservers") or dns.get("ns_records") or []
 
         st.markdown(
             f'<div class="evidence-card" style="border-left:4px solid #3d2b1f;margin-bottom:1rem">'

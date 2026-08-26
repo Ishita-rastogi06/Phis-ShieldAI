@@ -72,29 +72,45 @@ def _records(resolver: dns.resolver.Resolver, host: str, record_type: str) -> tu
 
 @lru_cache(maxsize=256)
 def analyze_dns(url: str) -> dict:
+    from security.tldextract_config import offline_extractor
     target = url if "://" in url else f"https://{url}"
-    host = urlparse(target).hostname
+    host = (urlparse(target).hostname or "").lower()
+    
+    ext = offline_extractor()(host)
+    reg_domain = f"{ext.domain}.{ext.suffix}" if ext.domain and ext.suffix else host
+
     result = {
         "host": host, "status": "UNAVAILABLE", "a_records": [], "aaaa_records": [],
-        "mx_records": [], "ns_records": [], "record_errors": {}, "error": None,
+        "mx_records": [], "ns_records": [], "ips": [], "ip_addresses": [],
+        "nameservers": [], "record_errors": {}, "error": None,
     }
     if not host:
         result["error"] = "URL has no hostname"
         return result
     try:
         resolver = dns.resolver.Resolver(configure=True)
-        resolver.timeout = 2.0
-        resolver.lifetime = 2.0
+        resolver.timeout = 2.5
+        resolver.lifetime = 2.5
     except Exception:
         resolver = _make_fallback_resolver()
 
     for kind, key in (("A", "a_records"), ("AAAA", "aaaa_records"), ("MX", "mx_records"), ("NS", "ns_records")):
         values, error = _records(resolver, host, kind)
+        # If subdomain has no MX or NS records, query registrable domain (e.g. wikipedia.org)
+        if not values and kind in ("MX", "NS") and host != reg_domain:
+            values, _ = _records(resolver, reg_domain, kind)
         result[key] = values
-        if error:
+        if error and not values:
             result["record_errors"][kind] = error
-    if any(result[key] for key in ("a_records", "aaaa_records", "mx_records", "ns_records")):
+
+    all_ips = sorted(list(set(result["a_records"] + result["aaaa_records"])))
+    result["ips"] = all_ips
+    result["ip_addresses"] = all_ips
+    result["nameservers"] = result["ns_records"]
+
+    if all_ips or result["mx_records"] or result["ns_records"]:
         result["status"] = "RESOLVED"
+        result["notes"] = f"Resolved {len(all_ips)} IP(s), {len(result['mx_records'])} MX, {len(result['ns_records'])} NS"
     elif result["record_errors"]:
         result["error"] = "; ".join(f"{kind}: {message}" for kind, message in result["record_errors"].items())
     else:
