@@ -103,7 +103,7 @@ The bundled artifact `models/artifacts/url_live_25_detector.joblib` is a Random 
 
 | Metric | Value |
 | --- | ---: |
-| Accuracy | 94.08% |
+| Accuracy | 93.05% |
 | Phishing Precision | 93.95% |
 | Phishing Recall | 92.49% |
 | Phishing F1 | 93.21% |

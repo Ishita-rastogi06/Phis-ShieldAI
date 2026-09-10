@@ -9,7 +9,7 @@
 ### A. Real-Time Live ML Classifier (25 Features)
 - **Live Inference**: The ML classifier runs **live on any reachable URL** by extracting 25 real-time structural, DOM, TLS, DNS, and WHOIS features (`uci-live-25-v1`).
 - **Empirical Held-Out Metrics** (evaluated on held-out test data from OpenML 4534):
-  - **Accuracy**: **94.08%**
+  - **Accuracy**: **93.05%**
   - **Phishing Precision**: **93.95%**
   - **Phishing Recall**: **92.49%**
   - **Phishing F1 Score**: **93.21%**

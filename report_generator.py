@@ -13,7 +13,10 @@ def generate_canonical_report(scan_type: str, analysis: dict) -> str:
     target = analysis.get("normalized_url") or analysis.get("url") or "N/A"
     verdict = str(analysis.get("verdict", "UNKNOWN")).upper().replace("_", " ")
     risk_score = analysis.get("risk", "N/A")
-    risk_level = str(analysis.get("risk_level", "N/A")).upper()
+    raw_risk_level = analysis.get("risk_level")
+    if not raw_risk_level:
+        raw_risk_level = analysis.get("verdict", "N/A")
+    risk_level = str(raw_risk_level).upper().replace("_", " ")
     confidence = str(analysis.get("confidence_strength", "N/A")).title()
     brand = analysis.get("brand") or "Unknown / Unclassified"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

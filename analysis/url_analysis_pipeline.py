@@ -23,7 +23,7 @@ from url_expander import ExpansionStatus, expand_url
 from website_analyzer import analyze_website
 from whois_checker import check_domain_age
 
-SOURCE_TIMEOUT = 2.5
+SOURCE_TIMEOUT = 5.0
 CANONICAL_VERDICTS = {"CONFIRMED_MALICIOUS", "LIKELY_PHISHING", "SUSPICIOUS", "LIKELY_LEGITIMATE", "INSUFFICIENT_EVIDENCE"}
 PROVIDER_NAMES = ("virustotal", "openphish")
 
@@ -420,10 +420,10 @@ def analyze_url(url: str, *, include_enrichment: bool = True, progress_callback:
     pool = ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="phishshield")
     try:
         futures = {name: pool.submit(fn, normalized) for name, fn in jobs.items()}
-        wait(list(futures.values()), timeout=2.0)
+        wait(list(futures.values()), timeout=SOURCE_TIMEOUT)
         for name, future in futures.items():
             if not future.done():
-                values[name], durations[name] = _unavailable(name, "pipeline timeout"), 2.0
+                values[name], durations[name] = _unavailable(name, "pipeline timeout"), SOURCE_TIMEOUT
                 log_scan_stage("job_timeout", job=name, normalized_url=normalized)
             else:
                 try:

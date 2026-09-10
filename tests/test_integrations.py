@@ -45,7 +45,7 @@ class ThreatIntelTests(unittest.TestCase):
     def test_history_and_report_preserve_evidence(self):
         save_scan("URL", "https://example.com", "INSUFFICIENT_EVIDENCE", 0, providers={"virustotal": {"status": "NO_MATCH"}})
         self.assertIn("Provider Evidence", load_history().columns)
-        self.assertIn("Normalized provider evidence", generate_report("https://example.com", "INSUFFICIENT_EVIDENCE", 0, "test", providers={"virustotal": {"status": "NO_MATCH"}}))
+        self.assertIn("CLOUD THREAT INTELLIGENCE FEED EVIDENCE", generate_report("https://example.com", "INSUFFICIENT_EVIDENCE", 0, "test", providers={"virustotal": {"status": "NO_MATCH"}}))
     def test_canonical_history_and_report_include_local_evidence(self):
         from history_manager import save_canonical_scan
         from report_generator import generate_canonical_report
@@ -57,7 +57,7 @@ class ThreatIntelTests(unittest.TestCase):
         row = load_history().iloc[0]
         self.assertEqual(row["Normalized URL"], "https://example.com")
         self.assertIn("certificate_valid", row["Local Evidence"])
-        self.assertIn("Website analysis", generate_canonical_report("URL", analysis))
+        self.assertIn("Website Inspection", generate_canonical_report("URL", analysis))
     def test_no_match_is_not_legitimate(self):
         verdict = calculate_verdict(providers={"virustotal": result("virustotal", NO_MATCH)}, brand_similarity=0, trusted_domain=False, website={}, tls={}, whois=None, local_reasons=[])[0]
         self.assertEqual(verdict, "INSUFFICIENT_EVIDENCE")
@@ -141,7 +141,7 @@ class ThreatIntelTests(unittest.TestCase):
     def test_pipeline_is_bounded_and_concurrent(self):
         from pathlib import Path
         source = Path("analysis/url_analysis_pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("ThreadPoolExecutor", source); self.assertIn("SOURCE_TIMEOUT = 10.0", source); self.assertIn("shutdown(wait=False", source)
+        self.assertIn("ThreadPoolExecutor", source); self.assertIn("SOURCE_TIMEOUT = 5.0", source); self.assertIn("shutdown(wait=False", source)
     def test_qr_screenshot_and_email_canonical_url_paths(self):
         from email_url_scanner import extract_urls as email_urls
         from security.url_extraction import extract_urls

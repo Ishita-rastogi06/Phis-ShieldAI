@@ -65,8 +65,9 @@ try:
     from history_manager import get_or_create_user_id
     _cookie_mgr = stx.CookieManager(key="phishshield_cookies")
     get_or_create_user_id(_cookie_mgr)
-except Exception:
-    pass
+except Exception as e:
+    import logging
+    logging.warning("CookieManager initialization failed; falling back to non-persistent session history: %s", e)
 st.markdown("""
 <style>
 :root { --bg:#18181b; --surface:#27272a; --surface-soft:rgba(39,39,42,.78); --line:rgba(244,244,245,.12); --text:#f4f4f5; --muted:#a1a1aa; --crimson:#e11d48; --crimson-deep:#be123c; --danger:#fb7185; --warning:#fbbf24; --success:#86efac; }
@@ -491,7 +492,7 @@ def render_url_evidence(result, scan_type="URL"):
                 f'<div class="evidence-card" style="border-left:4px solid #8f6559;margin-bottom:1rem">'
                 f'<span class="card-kicker">{model_title}</span>'
                 f'<h4>Status: <span style="color:#7c5448">ACTIVE</span> · Prediction: {pred_label}</h4>'
-                f'<p style="font-size:.85rem;margin-top:.3rem"><b>This Scan Confidence:</b> {conf_val}% Phishing Probability &nbsp;|&nbsp; <b>Model Benchmark Accuracy:</b> 94.08% (UCI Held-Out Test Set)</p>'
+                f'<p style="font-size:.85rem;margin-top:.3rem"><b>This Scan Confidence:</b> {conf_val}% Phishing Probability &nbsp;|&nbsp; <b>Model Benchmark Accuracy:</b> 93.05% (UCI Held-Out Test Set)</p>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -989,7 +990,7 @@ def render_threat_dashboard() -> None:
     average_risk = round(float(history["Risk Score"].fillna(0).mean()), 1) if total else 0
     trend = _history_trend(history)
     cards = [("Total Scans", total, "terracotta"), ("Threats Detected", threats, "sand"),
-             ("Avg Risk Score", average_risk, "terracotta"), ("Model Accuracy", "94.08%", "sand")]
+             ("Avg Risk Score", average_risk, "terracotta"), ("Model Accuracy", "93.05%", "sand")]
     st.markdown('<div class="dashboard-stats">' + ''.join(
         f'<div class="stat-card {tone}"><span>{label}</span><strong>{value}</strong>' + (f'<small>{trend}</small>' if trend and label != "Model Accuracy" else "") + '</div>'
         for label, value, tone in cards) + '</div>', unsafe_allow_html=True)
@@ -1007,7 +1008,7 @@ def render_threat_dashboard() -> None:
             <div style="font-size: 0.8rem; color: #5c5148; line-height: 1.4;">25-Feature Random Forest model running real-time inference on DOM & WHOIS.</div>
           </div>
           <div>
-            <div style="margin-top: 12px; font-size: 0.72rem; font-weight: 700; color: #4a3728; background: #f4ede4; border: 1px solid #d8c8b8; padding: 3px 8px; border-radius: 5px; display: inline-block;">94.08% Accuracy (OpenML 4534)</div>
+            <div style="margin-top: 12px; font-size: 0.72rem; font-weight: 700; color: #4a3728; background: #f4ede4; border: 1px solid #d8c8b8; padding: 3px 8px; border-radius: 5px; display: inline-block;">93.05% Accuracy (OpenML 4534)</div>
           </div>
         </div>
         <div style="background: #fffdf9; border: 1px solid #ded0b8; border-top: 4px solid #8f6559; border-radius: 10px; padding: 16px 18px; min-height: 110px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 4px 16px rgba(43, 36, 32, 0.06);">

@@ -19,6 +19,7 @@ ENV/
 # Distribution / packaging
 build/
 dist/
+scratch/
 *.egg-info/
 *.egg
 
