@@ -7,6 +7,10 @@
 ![Cybersecurity](https://img.shields.io/badge/Domain-Cybersecurity-1D9E75)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
+
+[![Live Demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://phis-shieldai.streamlit.app/)
+
+
 **PhishShield AI** is a real-time phishing detection and threat-intelligence platform built with Streamlit. It combines a **25-feature live Random Forest URL classifier** with active threat-intelligence lookups (VirusTotal, OpenPhish), email analysis, QR code decoding, screenshot OCR, brand-impersonation detection, DNS/TLS/WHOIS enrichment, MITRE ATT&CK mapping, and downloadable scan reports.
 
 The model ships **pre-trained** — no dataset download or training step is required to run the app.
