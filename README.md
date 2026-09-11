@@ -13,7 +13,8 @@
 
 The model ships **pre-trained** — no dataset download or training step is required to run the app.
 
-[![Live Demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://phis-shieldai.streamlit.app/) LIVE URL : https://phis-shieldai.streamlit.app/
+[![Live Demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://phis-shieldai.streamlit.app/) <br>
+LIVE URL : https://phis-shieldai.streamlit.app/
 
 ---
 
